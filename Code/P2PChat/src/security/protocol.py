@@ -92,19 +92,38 @@ class ProtocolHandler:
             print("[WARNING] validate_packet: not a dict")
             return False
         
-        for field in REQUIRED_FIELDS:
+        packet_type = packet.get("type")
 
-            if field not in packet:
-                print(f"[WARNING] validate_packet: Missing field '{field}'")
-                return False
+        if packet_type == PacketType.HANDSHAKE:
+            required_fields = {
+                "type", 
+                "username", 
+                "version", 
+                "public_key"
+            }
+
+        elif packet_type == PacketType.HANDSHAKE_ACK:
+            required_fields = { 
+                "type", 
+                "status", 
+                "public_key" 
+                }
         
-        for field in STRING_FIELDS:
+        else:
+            required_fields = {
+                "type",
+                "sender",
+                "payload",
+                "timestamp",
+                "message_id"
+            }
 
-            if not isinstance(packet.get(field), str):
-                print(f"[WARNING] validate_packet: field '{field}' must be a string")
+        for field in required_fields:
+            if field not in packet:
+                print(f"[WARNING] Missing field '{field}'")
                 return False
 
-        return True  
+        return True
     
     def decrypt_payload(self, packet: dict[str, Any]) -> str:
         """Decrypt packet payload. Raises InvalidToken if decryption fails."""
