@@ -1,6 +1,6 @@
 import socket
 import threading
-from cryptography.fernet import InvalidToken
+from cryptography.fernet import Fernet, InvalidToken
 from security.crypto import CryptoHandler
 from security.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
@@ -14,7 +14,8 @@ class P2PNode:
         port: int,
         username: str = "Anonymous",
         on_message=None,
-        on_disconnect=None
+        on_disconnect=None,
+        on_connected=None
     ) -> None:
         self.host = host
         self.port = port
@@ -22,17 +23,19 @@ class P2PNode:
 
         self.on_message = on_message
         self.on_disconnect = on_disconnect
+        self.on_connected = on_connected
 
         self.server_socket: socket.socket | None = None
 
         # All three dicts are protected by peers_lock.
-        self.peers_lock = threading.Lock()
+        self.peers_lock = threading.RLock()
         self.peers: dict[str, socket.socket] = {}
         self.peer_sessions: dict[str, dict] = {}
 
-        self.crypto_handler = CryptoHandler()
-        self.protocol_handler = ProtocolHandler(self.crypto_handler)
+        #self.crypto_handler = CryptoHandler()
+        self.protocol_handler = ProtocolHandler()
 
+        # RSA key pair — used only for session-key exchange.
         self.private_key, self.public_key = (RSAUtils.generate_key_pair())
 
         self.is_running = False
@@ -51,7 +54,8 @@ class P2PNode:
         
         threading.Thread(
             target=self.accept_connections,
-            daemon=True
+            daemon=True,
+            name="AcceptThread"
         ).start()
 
     def stop_server(self) -> None:
@@ -94,15 +98,11 @@ class P2PNode:
 
                 print(f"[INFO] Incoming connection from {peer_address}")
 
-                with self.peers_lock:
-                    already = peer_address in self.peers
-
-                if already:
+                if not self.register_peer(peer_address, client_socket, is_initiator=False):
                     print(f"[INFO] Already connected: {peer_address}")
                     client_socket.close()
                     continue
 
-                self.register_peer(peer_address, client_socket)
                 self.start_receive_thread(peer_address, client_socket)
                 self.schedule_handshake_timeout(peer_address)
 
@@ -133,8 +133,15 @@ class P2PNode:
 
             print(f"[INFO] Connected to {peer_address}")
 
-            self.register_peer(peer_address, peer_socket)
-            self.send_handshake(peer_socket)
+            if not self.register_peer(peer_address, peer_socket, is_initiator=True):
+                print(f"[INFO] Already connected to {peer_address}")
+                peer_socket.close()
+                return False
+
+            if not self.send_handshake(peer_socket):
+                self.remove_peer(peer_socket)
+                return False
+
             self.start_receive_thread(peer_address, peer_socket)
             self.schedule_handshake_timeout(peer_address)
 
@@ -145,7 +152,7 @@ class P2PNode:
             return False  
 
     # Message sending and receiving
-    def send_message(self, message: str | dict, peer_address: str) -> None:
+    def send_message(self, message: str, peer_address: str) -> bool:
         """Send a message to a connected peer."""
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
@@ -153,28 +160,28 @@ class P2PNode:
 
         if session is None or session["state"] != "active":
             print(f"[WARNING] Peer not ready: {peer_address}")
-            return
+            return False
 
         if peer_socket is None:
-            return
+            return False
+
+        crypto: CryptoHandler | None = session.get("crypto")
 
         try:
 
-            if isinstance(message, str):
-                packet = self.protocol_handler.create_packet(
-                    PacketType.MESSAGE,
-                    self.username,
-                    message,
-                )
-
-            else:
-                packet = message
-
+            packet = self.protocol_handler.create_packet(
+                PacketType.MESSAGE,
+                self.username,
+                message,
+                crypto=crypto,
+            )
             peer_socket.sendall(self.protocol_handler.serialize(packet))
+            return True
 
         except (BrokenPipeError, OSError) as error:
             print(f"[ERROR] Send failed: {error}")
             self.remove_peer(peer_socket)
+            return False
 
     def receive_messages(self, peer_socket: socket.socket) -> None:
         """Receive loop — dispatches to handlers. Must never raise."""
@@ -199,6 +206,9 @@ class P2PNode:
 
                 elif msg_type == PacketType.HANDSHAKE_ACK:
                     self.handle_handshake_ack(packet, peer_socket)
+
+                elif msg_type == PacketType.SESSION_KEY:
+                    self.handle_session_key(packet, peer_socket)
 
                 elif msg_type == PacketType.MESSAGE:
                     self.handle_message(packet, peer_socket)
@@ -233,8 +243,8 @@ class P2PNode:
     def handle_handshake(
         self, packet: dict, peer_socket: socket.socket
     ) -> None:
-        required = {"type", "username", "version", "public_key"}
-        if not required.issubset(packet):
+        
+        if not self.protocol_handler.validate_packet(packet):
             print("[WARNING] Malformed handshake — disconnecting peer")
             self.remove_peer(peer_socket)
             return
@@ -245,6 +255,7 @@ class P2PNode:
 
         print(f"[HANDSHAKE] Received from {peer_address} (user: {packet['username']})")
 
+        # Validate the public key before proceeding with the handshake.
         try:
             RSAUtils.load_public_key(packet["public_key"])
 
@@ -269,23 +280,21 @@ class P2PNode:
         }
         try:
             peer_socket.sendall(self.protocol_handler.serialize(ack))
+
         except OSError as error:
             print(f"[ERROR] Failed to send handshake_ack: {error}")
             self.remove_peer(peer_socket)
             return
 
-        with self.peers_lock:
-            session = self.peer_sessions.get(peer_address)
-
-            if session is not None:
-                session["handshake_complete"] = True
-
-        self.set_peer_state(peer_address, "active")
-        print(f"[INFO] Peer active: {peer_address}")
-
     def handle_handshake_ack(
         self, packet: dict, peer_socket: socket.socket
     ) -> None:
+        
+        if not self.protocol_handler.validate_packet(packet):
+            print("[WARNING] Malformed handshake_ack — disconnecting peer")
+            self.remove_peer(peer_socket)
+            return
+        
         peer_address = self.get_peer_address(peer_socket)
         if peer_address is None:
             return
@@ -295,18 +304,79 @@ class P2PNode:
             self.remove_peer(peer_socket)
             return
 
+        raw_key = packet.get("public_key", "")
+
+        try:
+            RSAUtils.load_public_key(raw_key)
+
+        except Exception:
+            print("[WARNING] Invalid RSA public key in handshake_ack — disconnecting")
+            self.remove_peer(peer_socket)
+            return
+
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
             if session is None:
                 return
             
-            if "public_key" in packet:
-                session["public_key"] = packet["public_key"]
+            session["public_key"] = raw_key
 
-            session["handshake_complete"] = True
+        with self.peers_lock:
+            session = self.peer_sessions.get(peer_address)
 
-        self.set_peer_state(peer_address, "active")
-        print(f"[INFO] Handshake complete — peer active: {peer_address}")
+        if session is None:
+            return
+        
+        if session["is_initiator"]:
+            self._send_session_key(peer_socket, peer_address)
+
+
+
+
+    def handle_session_key(
+        self, packet: dict, peer_socket: socket.socket
+    ) -> None:
+        """Process the session key sent by the peer.  This is called by the 
+        protocol handler after receiving a session_key packet."""
+
+        peer_address = self.get_peer_address(peer_socket)
+
+        if peer_address is None:
+            return
+
+        encrypted_key_hex = packet.get("payload", "")
+
+        if not encrypted_key_hex:
+            print(f"[WARNING] Empty session_key payload from {peer_address}")
+            self.remove_peer(peer_socket)
+            return
+
+        try:
+            encrypted_key = bytes.fromhex(encrypted_key_hex)
+            fernet_key = RSAUtils.decrypt(self.private_key, encrypted_key)
+            crypto = CryptoHandler(key=fernet_key)
+
+        except Exception as exc:
+            print(f"[WARNING] Failed to decrypt session key from {peer_address}: {exc}")
+            self.remove_peer(peer_socket)
+            return
+
+        with self.peers_lock:
+            session = self.peer_sessions.get(peer_address)
+
+            if session is None:
+                return
+            
+            session["crypto"] = crypto
+            session["state"] = "active"
+            count = len(self.peers)
+
+        print(f"[INFO] Session key received — peer active: {peer_address} "
+              f"(peers: {count})")
+
+        if self.on_connected is not None:
+            self.on_connected(peer_address)
+
 
     def handle_message(
         self, packet: dict, peer_socket: socket.socket
@@ -325,14 +395,21 @@ class P2PNode:
 
         if session["state"] != "active":
             print(
-            f"[WARNING] Message from "
-            f"non-active peer {peer_address}"
+            f"[WARNING] Message from non-active peer {peer_address}"
         )
             return
 
-        payload = (self.protocol_handler.validate_and_decrypt(packet))
+        if not self.protocol_handler.validate_packet(packet):
+            print(f"[WARNING] Invalid message packet from {peer_address} — dropping")
+            return
+        
+        crypto: CryptoHandler | None = session.get("crypto")
 
-        if payload is None:
+        try:
+            payload = self.protocol_handler.decrypt_payload(packet, crypto=crypto)
+
+        except (InvalidToken, ValueError) as error:
+            print(f"[WARNING] Decryption failed from {peer_address}: {error}")
             return
 
         if self.on_message is not None:
@@ -353,20 +430,27 @@ class P2PNode:
                 
         return None
 
-    def register_peer(self, peer_address: str, sock: socket.socket) -> None:
+    def register_peer(self, peer_address: str, sock: socket.socket, is_initiator: bool) -> bool:
+        """Atomically register *peer_address*."""
         with self.peers_lock:
 
+            if peer_address in self.peers:
+                return False
+            
             self.peers[peer_address] = sock
-            peer_count = len(self.peers)
             self.peer_sessions[peer_address] = {
                 "state": "pending",
                 "public_key": None,
                 "session_key": None,
-                "handshake_complete": False,
+                "crypto": None,
                 "username": None,
+                "is_initiator": is_initiator
             }
 
-        print(f"[INFO] Peer registered: {peer_address} — active peers: {peer_count}")
+            count = len(self.peers)
+
+        print(f"[INFO] Peer registered: {peer_address} — active peers: {count}")
+        return True
 
     def set_peer_state(self, peer_address: str, state: str) -> None:
         with self.peers_lock:
@@ -408,7 +492,7 @@ class P2PNode:
             name=f"Recv-{peer_address}",
         ).start()
 
-    def send_handshake(self, peer_socket: socket.socket) -> None:
+    def send_handshake(self, peer_socket: socket.socket) -> bool:
 
         handshake = {
             "type": PacketType.HANDSHAKE,
@@ -417,7 +501,13 @@ class P2PNode:
             "public_key": RSAUtils.serialize_public_key(self.public_key),
         }
 
-        peer_socket.sendall(self.protocol_handler.serialize(handshake))   
+        try:
+            peer_socket.sendall(self.protocol_handler.serialize(handshake))
+            return True
+        
+        except (BrokenPipeError, OSError) as error:
+            print(f"[ERROR] Failed to send handshake: {error}")
+            return False   
 
     def schedule_handshake_timeout(self, peer_address: str) -> None:
         """Disconnect *peer_address* if still pending after the timeout."""
@@ -429,10 +519,7 @@ class P2PNode:
 
                 session = self.peer_sessions.get(peer_address)
 
-                if session is None:
-                    return
-                
-                if session["state"] != "pending":
+                if session is None or session["state"] != "pending":
                     return
                 
                 peer_socket = self.peers.get(peer_address)
@@ -441,9 +528,66 @@ class P2PNode:
                 return
 
             print(f"[WARNING] Handshake timeout — disconnecting {peer_address}")
-
             self.remove_peer(peer_socket)
 
         timer = threading.Timer(HANDSHAKE_TIMEOUT, check_timeout)
         timer.daemon = True
         timer.start()
+
+    def _send_session_key(self, peer_socket: socket.socket, peer_address: str) -> None:
+        """Generate a session key, encrypt it with the peer's RSA public key, and send it."""
+
+        with self.peers_lock:
+            session = self.peer_sessions.get(peer_address)
+
+            if session is None:
+                return
+            
+            raw_peer_key = session.get("public_key")
+
+        if not raw_peer_key:
+            print(f"[WARNING] No peer public key for {peer_address} — cannot send session key")
+            return
+
+        try:
+            peer_pub = RSAUtils.load_public_key(raw_peer_key)
+
+        except Exception as exc:
+            print(f"[ERROR] Cannot load peer public key for {peer_address}: {exc}")
+            self.remove_peer(peer_socket)
+            return
+
+        # Generate a fresh Fernet key for this direction.
+        fernet_key = Fernet.generate_key()
+        try:
+            encrypted_key = RSAUtils.encrypt(peer_pub, fernet_key)
+
+        except Exception as exc:
+            print(f"[ERROR] RSA encrypt failed for {peer_address}: {exc}")
+            self.remove_peer(peer_socket)
+            return
+
+        session_key_packet = {
+            "type": PacketType.SESSION_KEY,
+            "payload": encrypted_key.hex(),
+        }
+
+        try:
+            peer_socket.sendall(self.protocol_handler.serialize(session_key_packet))
+
+        except (BrokenPipeError, OSError) as exc:
+            print(f"[ERROR] Failed to send session key to {peer_address}: {exc}")
+            self.remove_peer(peer_socket)
+            return
+
+        crypto = CryptoHandler(key=fernet_key)
+
+        with self.peers_lock:
+            session = self.peer_sessions.get(peer_address)
+
+            if session is not None:
+                session["session_key"] = fernet_key
+                session["crypto"] = crypto
+                session["state"] = "active"
+
+        print(f"[INFO] Session key sent to {peer_address}")

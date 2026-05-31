@@ -9,15 +9,26 @@ from security.crypto import CryptoHandler
 class PacketType:
     HANDSHAKE = "handshake"
     HANDSHAKE_ACK = "handshake_ack"
+    SESSION_KEY = "session_key" # Sprint 3: RSA-wrapped Fernet key exchange
     MESSAGE = "message"
     SYSTEM = "system"
     ERROR = "error"
 
-# Fields every non-handshake packet must carry.
-REQUIRED_FIELDS = {"type", "sender", "payload", "timestamp", "message_id"}
+_HANDSHAKE_REQUIRED: frozenset[str] = frozenset({
+    "type", "username", "version", "public_key",
+})
 
-# Fields that must be strings.
-STRING_FIELDS = {"type", "sender", "message_id", "timestamp"}
+_HANDSHAKE_ACK_REQUIRED: frozenset[str] = frozenset({
+    "type", "status", "public_key",
+})
+
+_MESSAGE_REQUIRED: frozenset[str] = frozenset({
+    "type", "sender", "payload", "timestamp", "message_id",
+})
+
+_MESSAGE_STRING_FIELDS: frozenset[str] = frozenset({
+    "type", "sender", "message_id", "timestamp",
+})
 
 class ProtocolHandler:
     """Central packet creation, framing, validation, and socket I/O."""
@@ -25,17 +36,17 @@ class ProtocolHandler:
     HEADER_SIZE = 4  
     MAX_PACKET_SIZE = 1024 * 1024  # 1 MB max packet size to prevent abuse
 
-    def __init__(self, crypto_handler: CryptoHandler) -> None:
-        self.crypto_handler = crypto_handler
+    def __init__(self) -> None:
+        # No state needed for now, but this is where we would store protocol version, supported features, etc.
+        pass
 
-    def create_packet(self, msg_type: str, sender: str, payload_content: str) -> dict[str, str]:
+    def create_packet(self, msg_type: str, sender: str, payload_content: str, crypto: Optional[CryptoHandler] = None) -> dict[str, Any]:
         """Build and return a complete packet dict. Chat payloads are Fernet-encrypted; handshake payloads are plain."""
 
-        if msg_type in [PacketType.HANDSHAKE, PacketType.HANDSHAKE_ACK]:
-            payload = payload_content
-
+        if crypto is not None:
+            payload: Any = crypto.encrypt(payload_content)
         else:
-            payload = self.crypto_handler.encrypt(payload_content)
+            payload = payload_content
         
         packet = {
             "type": msg_type,
@@ -44,6 +55,7 @@ class ProtocolHandler:
             "payload": payload,
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
         }
+
         return packet
 
     #serialization and deserialization methods for framing packets with a length header
@@ -53,31 +65,6 @@ class ProtocolHandler:
 
         json_data = json.dumps(packet).encode('utf-8')
         return struct.pack("!I", len(json_data)) + json_data
-
-    def deserialize(self, framed_data: bytes) -> dict[str, Any]:
-        """Deserialize a length-prefixed byte stream. Raises ValueError on any structural problem."""
-
-        if len(framed_data) > self.MAX_PACKET_SIZE:
-            raise ValueError(f"Packet size exceeds maximum allowed size of {self.MAX_PACKET_SIZE} bytes.")
-        
-        if len(framed_data) < self.HEADER_SIZE:
-            raise ValueError("Data too short to contain a header.")
-            
-        header = framed_data[:self.HEADER_SIZE]
-        payload_length = struct.unpack('!I', header)[0]
-        
-        expected_length = (self.HEADER_SIZE + payload_length)
-
-        if len(framed_data) < expected_length:
-            raise ValueError(f"Incomplete packet. Expected {expected_length} bytes, got {len(framed_data)}.")
-            
-        json_data = framed_data[self.HEADER_SIZE:expected_length]
-        
-        try:
-            return json.loads(json_data.decode('utf-8'))
-        
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise ValueError(f"Malformed packet: {str(e)}")
     
     # Validation method to ensure incoming packets have the required structure and fields   
     def validate_packet(self, packet: dict[str, Any]) -> bool:
@@ -95,58 +82,56 @@ class ProtocolHandler:
         packet_type = packet.get("type")
 
         if packet_type == PacketType.HANDSHAKE:
-            required_fields = {
-                "type", 
-                "username", 
-                "version", 
-                "public_key"
-            }
+            required = _HANDSHAKE_REQUIRED
 
         elif packet_type == PacketType.HANDSHAKE_ACK:
-            required_fields = { 
-                "type", 
-                "status", 
-                "public_key" 
-                }
+            required = _HANDSHAKE_ACK_REQUIRED
         
-        else:
-            required_fields = {
-                "type",
-                "sender",
-                "payload",
-                "timestamp",
-                "message_id"
-            }
+        elif packet_type == PacketType.MESSAGE:
+            required = _MESSAGE_REQUIRED
+            # Also enforce string types on MESSAGE fields.
 
-        for field in required_fields:
+            for field in _MESSAGE_STRING_FIELDS:
+
+                if not isinstance(packet.get(field), str):
+                    print(f"[WARNING] validate_packet: '{field}' must be a string")
+                    return False
+                
+        else:
+            # Unknown or future packet type — drop it.
+            print(f"[WARNING] validate_packet: unknown type '{packet_type}'")
+            return False
+
+        for field in required:
+
             if field not in packet:
-                print(f"[WARNING] Missing field '{field}'")
+                print(f"[WARNING] validate_packet: missing field '{field}'")
                 return False
 
         return True
     
-    def decrypt_payload(self, packet: dict[str, Any]) -> str:
+    def decrypt_payload(self, packet: dict[str, Any], crypto: Optional[CryptoHandler] = None) -> str:
         """Decrypt packet payload. Raises InvalidToken if decryption fails."""
 
-        encrypted_payload = packet["payload"]
-        decrypted_message = self.crypto_handler.decrypt(encrypted_payload)
-
-        return decrypted_message
+        if crypto is not None:
+            return crypto.decrypt(packet["payload"])
+        
+        return packet["payload"]
     
-    def validate_and_decrypt(self, packet: dict[str, Any]) -> Optional[str]:
+    def validate_and_decrypt(self, packet: dict[str, Any], crypto: Optional[CryptoHandler] = None) -> Optional[str]:
         """Convenience: validate then decrypt.  Returns None on any failure."""
 
         if not self.validate_packet(packet):
             return None
         try:
-            decrypted_message = self.decrypt_payload(packet)
+            decrypted_message = self.decrypt_payload(packet, crypto)
             return decrypted_message
         
         except (InvalidToken, ValueError) as exc:
             print(f"[WARNING] Decryption failed: {exc}")
             return None
 
-    def receive_exact( self, peer_socket, size) -> bytes:
+    def receive_exact( self, peer_socket: Any, size: int) -> bytes:
         """Read exactly *size* bytes from *peer_socket*.
 
         Returns b"" when the connection is closed.
@@ -163,7 +148,7 @@ class ProtocolHandler:
 
         return bytes(received_data)
     
-    def receive_packet( self, peer_socket ) -> Optional[dict[str, Any]]:
+    def receive_packet( self, peer_socket: Any ) -> Optional[dict[str, Any]]:
         """Read one framed packet from *peer_socket*.
 
         Returns the parsed dict, or None if the connection closed or the
@@ -189,12 +174,14 @@ class ProtocolHandler:
             
             packet = json.loads(packet_data.decode("utf-8"))
 
-            if not self.validate_packet(packet):
-                print("[WARNING] Packet validation failed")
-                return None                    
-
             return packet
+
+        except OSError as error:
+            print(f"[ERROR] Socket receive failed: {error}")
+            return None
 
         except (json.JSONDecodeError, UnicodeDecodeError, struct.error) as error:
             print(f"[WARNING] receive_packet: malformed data — {error}")
             return None
+        
+        

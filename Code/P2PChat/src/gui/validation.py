@@ -1,8 +1,16 @@
 import socket
 
+_RESERVED_IPS: frozenset[str] = frozenset({
+    "0.0.0.0",          # unspecified
+    "255.255.255.255",  # limited broadcast
+})
+
 
 def validate_ip(ip: str) -> bool:
     """Validate IPv4 address."""
+
+    if ip in _RESERVED_IPS:
+        return False
 
     try:
         socket.inet_aton(ip)

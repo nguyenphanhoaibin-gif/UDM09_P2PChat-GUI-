@@ -2,6 +2,8 @@ import customtkinter as ctk
 from gui.validation import validate_ip, validate_port
 from node.core import P2PNode
 
+DEFAULT_LISTEN_PORT = 12001 # Default port for P2P chat; can be changed in app.py if needed.
+
 class ChatApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
@@ -11,16 +13,17 @@ class ChatApp(ctk.CTk):
         
         self.node = P2PNode(
             host="0.0.0.0",
-            port=12000,  # Default port for P2P chat
+            port=DEFAULT_LISTEN_PORT,
             on_message=self.handle_peer_message,
-            on_disconnect=self.handle_disconnect
+            on_disconnect=self.handle_disconnect,
+            on_connected=self.handle_connected
         )
         
         self.node.start_server()
 
         self.setup_window()
         self.setup_layout()
-        self.add_system_message("P2P Node started. Waiting for connections...")
+        self.add_system_message(f"P2P Node started — listening on port {DEFAULT_LISTEN_PORT}.")
 
     # Layout and event handlers
     def setup_window(self) -> None:
@@ -128,7 +131,7 @@ class ChatApp(ctk.CTk):
         self.peer_listbox = ctk.CTkTextbox(
             self.sidebar_frame,
             width=250,
-            height=250
+            height=200
         )
 
         self.peer_listbox.pack(
@@ -137,8 +140,21 @@ class ChatApp(ctk.CTk):
             fill="both",
             expand=True
         )
+
         self.peer_listbox.bind("<ButtonRelease-1>", self.select_peer)
 
+        ctk.CTkLabel(
+            self.sidebar_frame, text="My Port", font=("Arial", 11)
+        ).pack(padx=10, anchor="w")
+
+        self.my_port_entry = ctk.CTkEntry(
+            self.sidebar_frame, placeholder_text=str(DEFAULT_LISTEN_PORT)
+        )
+        self.my_port_entry.pack(padx=10, pady=(0, 8), fill="x")
+
+        ctk.CTkLabel(
+            self.sidebar_frame, text="Peer IP", font=("Arial", 11)
+        ).pack(padx=10, anchor="w")
 
         # Peer IP input
         self.ip_entry = ctk.CTkEntry(
@@ -151,6 +167,10 @@ class ChatApp(ctk.CTk):
             pady=(10, 5),
             fill="x"
         )
+
+        ctk.CTkLabel(
+            self.sidebar_frame, text="Peer Port", font=("Arial", 11)
+        ).pack(padx=10, anchor="w")
 
         # Peer port input
         self.port_entry = ctk.CTkEntry(
@@ -213,12 +233,7 @@ class ChatApp(ctk.CTk):
             self.add_system_message(f"Could not connect to {ip}:{port}.")
             return
 
-        peer_address = f"{ip}:{port}"
-
-        if peer_address not in self.connected_peers:
-            self.connected_peers.append(peer_address)
-            self.update_peer_list()
-            self.add_system_message("Connected. Waiting for handshake…")
+        self.add_system_message("TCP connected — waiting for handshake…")
 
     def send_message(self) -> None:
         """Handle the Send button."""
@@ -234,11 +249,18 @@ class ChatApp(ctk.CTk):
         if self.selected_peer is None:
             self.add_system_message("No peer selected.")
             return
+        
+        sent = self.node.send_message(message, self.selected_peer)
 
-        self.node.send_message(message, self.selected_peer)
-        self.chat_box.insert("end", f"You: {message}\n")
-        self.chat_box.see("end")
-        self.message_entry.delete(0, "end")
+        if sent:
+            self.chat_box.insert("end", f"You → {self.selected_peer}: {message}\n")
+            self.chat_box.see("end")
+            self.message_entry.delete(0, "end")
+
+        else:
+            self.add_system_message(
+                f"Failed to send — {self.selected_peer} may have disconnected."
+            )
 
     def broadcast_message(self) -> None:
         """Handle the Broadcast button."""
@@ -265,16 +287,21 @@ class ChatApp(ctk.CTk):
         self.peer_listbox.delete("1.0", "end")
 
         for peer in self.connected_peers:
-            self.peer_listbox.insert("end", f"{peer}\n")
+            marker = "▶ " if peer == self.selected_peer else "  "
+            self.peer_listbox.insert("end", f"{marker}{peer}\n")
 
     def select_peer(self, event) -> None:  
         """Handle peer selection in the listbox."""
 
-        selected = self.peer_listbox.get("insert linestart", "insert lineend").strip()
+        raw = self.peer_listbox.get("insert linestart", "insert lineend").strip()
 
-        if selected:
-            self.selected_peer = selected
-            self.add_system_message(f"Selected peer: {selected}")
+        # Strip the selection marker if present.
+        candidate = raw.lstrip("▶ ").strip()
+
+        if candidate in self.connected_peers:
+            self.selected_peer = candidate
+            self.update_peer_list()  # refresh markers
+            self.add_system_message(f"Selected peer: {candidate}")
 
     # Message handling (called from networking thread)
     def display_peer_message(self, message: str | dict) -> None:
@@ -290,13 +317,22 @@ class ChatApp(ctk.CTk):
         self.chat_box.insert("end", f"[SYSTEM] {message}\n")
         self.chat_box.see("end")
 
-    def handle_peer_message(self, message: str | dict) -> None:
-        """Handle a message received from a peer (called from networking thread)."""
+    def handle_peer_message(self, message: str) -> None:
+        """Called from networking thread — schedule GUI update."""
+        
+        self.after(0, lambda: self.display_peer_message(message))
 
-        def update() -> None:
-            self.display_peer_message(message)
+    def handle_connected(self, peer_address: str) -> None:
+        """Handle a new peer connection event (called from networking thread)."""
+        def _update() -> None:
 
-        self.after(0, update)
+            if peer_address not in self.connected_peers:
+                self.connected_peers.append(peer_address)
+                self.update_peer_list()
+
+            self.add_system_message(f"Peer connected and ready: {peer_address}")
+
+        self.after(0, _update)
 
     def handle_disconnect(self, peer_address: str) -> None:
         """Handle a peer disconnection event (called from networking thread)."""
@@ -305,6 +341,7 @@ class ChatApp(ctk.CTk):
             if peer_address in self.connected_peers:
                 self.connected_peers.remove(peer_address)
                 self.update_peer_list()
+
             self.add_system_message(f"Connection lost: {peer_address}")
 
         self.after(0, update)

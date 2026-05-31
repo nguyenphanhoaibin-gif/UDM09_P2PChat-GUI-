@@ -8,15 +8,17 @@ class CryptoHandler:
         self.key = key or Fernet.generate_key()
         self.fernet = Fernet(self.key)
 
-    @staticmethod
+    """@staticmethod
     def generate_key() -> bytes:
-        """Generate and return a new Fernet key."""
+        #Generate and return a new Fernet key.
         return Fernet.generate_key()
-
+    """
     def encrypt(self, data: str) -> str:
         """Encrypt *data* and return the result as a base64-encoded string."""
+
         if not isinstance(data, str):
             raise ValueError("Data to encrypt must be a string.")
+        
         return self.fernet.encrypt(data.encode("utf-8")).decode("utf-8")
 
     def decrypt(self, encrypted_data: str) -> str:
@@ -25,8 +27,10 @@ class CryptoHandler:
         Raises:
             cryptography.fernet.InvalidToken: if decryption fails.
         """
+
         if not isinstance(encrypted_data, str):
             raise ValueError("Data to decrypt must be a string.")
+        
         return self.fernet.decrypt(encrypted_data.encode("utf-8")).decode("utf-8")
 
     def get_key(self) -> bytes:
