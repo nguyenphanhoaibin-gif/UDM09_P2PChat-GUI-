@@ -24,6 +24,7 @@ class ChatApp(ctk.CTk):
         
         except OSError as error:
             self.setup_window()
+            self.protocol("WM_DELETE_WINDOW", self.handle_close)
             self.setup_layout()
             self.add_system_message(f"Could not start server on port {listen_port}: {error}.")
             return
@@ -349,3 +350,7 @@ class ChatApp(ctk.CTk):
             self.add_system_message(f"Connection lost: {peer_address}")
 
         self.after(0, update)
+    
+    def handle_close(self) -> None:
+        self.node.stop_server()
+        self.destroy()
