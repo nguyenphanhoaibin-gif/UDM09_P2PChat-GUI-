@@ -42,6 +42,9 @@ class P2PNode:
         # RSA key pair — used only for session-key exchange.
         self.private_key, self.public_key = (RSAUtils.generate_key_pair())
 
+        self.seen_messages = set()
+        self.receive_threads = []
+
         self.is_running = False
 
     def start_server(self) -> None:
@@ -89,6 +92,11 @@ class P2PNode:
                 pass
 
             print("[INFO] Server stopped.")
+
+        for thread in self.receive_threads:
+            thread.join(timeout=1)
+        
+        self.receive_threads.clear()
 
     # Connection lifecycle
     def accept_connections(self) -> None:
@@ -261,8 +269,28 @@ class P2PNode:
             return
 
         peer_address = self.get_peer_address(peer_socket)
+
         if peer_address is None:
             return
+
+        real_peer_address = (
+            f"{peer_address.split(':')[0]}:"
+            f"{packet['listen_port']}"
+        )
+
+        with self.peers_lock:
+
+            if (
+                real_peer_address != peer_address
+                and real_peer_address in self.peers
+            ):
+                print(
+                    f"[INFO] Duplicate connection detected: "
+                    f"{peer_address} -> {real_peer_address}"
+                )
+
+                self.remove_peer(peer_socket)
+                return
 
         print(f"[HANDSHAKE] Received from {peer_address} (user: {packet['username']})")
 
@@ -283,6 +311,7 @@ class P2PNode:
     
             session["public_key"] = packet["public_key"]
             session["username"] = packet.get("username", "Unknown")
+            session["listen_port"] = packet.get("listen_port")
 
         ack = {
             "type": PacketType.HANDSHAKE_ACK,
@@ -406,6 +435,18 @@ class P2PNode:
             print(f"[WARNING] Invalid message packet from {peer_address} — dropping")
             return
         
+        message_id = packet["message_id"]
+        with self.peers_lock:
+
+            if message_id in self.seen_messages:
+                print("[WARNING] Replay packet dropped")
+                return
+            
+            self.seen_messages.add(message_id)
+
+            if len(self.seen_messages) > 5000:
+                self.seen_messages.clear()
+
         crypto: CryptoHandler | None = session.get("crypto")
 
         try:
@@ -475,12 +516,15 @@ class P2PNode:
                 self.on_disconnect(peer_address)
 
     def start_receive_thread(self, peer_address: str, sock: socket.socket) -> None:
-        threading.Thread(
+        thread = threading.Thread(
             target=self.receive_messages,
             args=(sock,),
             daemon=True,
             name=f"Recv-{peer_address}",
-        ).start()
+        )
+
+        thread.start()
+        self.receive_threads.append(thread)
 
     def send_handshake(self, peer_socket: socket.socket) -> bool:
 
@@ -488,6 +532,7 @@ class P2PNode:
             "type": PacketType.HANDSHAKE,
             "username": self.username,
             "version": "1.0",
+            "listen_port": self.port,
             "public_key": RSAUtils.serialize_public_key(self.public_key),
         }
 

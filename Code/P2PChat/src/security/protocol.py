@@ -15,7 +15,7 @@ class PacketType:
     ERROR = "error"
 
 _HANDSHAKE_REQUIRED: frozenset[str] = frozenset({
-    "type", "username", "version", "public_key",
+    "type", "username", "version","listen_port", "public_key",
 })
 
 _HANDSHAKE_ACK_REQUIRED: frozenset[str] = frozenset({

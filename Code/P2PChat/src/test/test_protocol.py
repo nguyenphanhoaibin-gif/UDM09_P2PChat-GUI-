@@ -101,6 +101,7 @@ def test_validate_accepts_valid_handshake() -> None:
         "type": PacketType.HANDSHAKE,
         "username": "Alice",
         "version": "1.0",
+        "listen_port": 12000,
         "public_key": RSAUtils.serialize_public_key(pub),
     }
     assert protocol.validate_packet(packet)
