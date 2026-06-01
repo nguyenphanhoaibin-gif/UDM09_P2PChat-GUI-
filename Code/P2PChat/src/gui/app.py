@@ -18,12 +18,15 @@ class ChatApp(ctk.CTk):
             on_disconnect=self.handle_disconnect,
             on_connected=self.handle_connected
         )
-        
-        self.node.start_server()
 
-        self.setup_window()
-        self.setup_layout()
-        self.add_system_message(f"P2P Node started — listening on port {listen_port}.")
+        try:
+            self.node.start_server()
+        
+        except OSError as error:
+            self.setup_window()
+            self.setup_layout()
+            self.add_system_message(f"Could not start server on port {listen_port}: {error}.")
+            return
 
     # Layout and event handlers
     def setup_window(self) -> None:
