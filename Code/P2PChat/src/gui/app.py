@@ -19,15 +19,17 @@ class ChatApp(ctk.CTk):
             on_connected=self.handle_connected
         )
 
+        self.setup_window()
+        self.setup_layout()
+
         try:
             self.node.start_server()
-        
+
         except OSError as error:
-            self.setup_window()
-            self.protocol("WM_DELETE_WINDOW", self.handle_close)
-            self.setup_layout()
             self.add_system_message(f"Could not start server on port {listen_port}: {error}.")
             return
+        
+        self.protocol("WM_DELETE_WINDOW", self.handle_close)
 
     # Layout and event handlers
     def setup_window(self) -> None:

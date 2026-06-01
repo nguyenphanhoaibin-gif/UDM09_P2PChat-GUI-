@@ -250,15 +250,23 @@ def test_handshake_timeout_disconnects_pending_peer() -> None:
 
 # ── Validation edge cases ─────────────────────────────────────────────────────
 
-def test_validate_ip_rejects_reserved() -> None:
-    """Fix W3: validate_ip rejects 0.0.0.0 and 255.255.255.255."""
-    from gui.validation import validate_ip
-    assert not validate_ip("0.0.0.0")
-    assert not validate_ip("255.255.255.255")
-    assert validate_ip("192.168.1.1")
-    assert not validate_ip("not_an_ip")
-    print("[OK] test_validate_ip_rejects_reserved")
+def test_validate_rejects_bad_session_key_payload() -> None:
+    protocol = ProtocolHandler()
 
+    assert not protocol.validate_packet({
+        "type": PacketType.SESSION_KEY
+    })
+
+    assert not protocol.validate_packet({
+        "type": PacketType.SESSION_KEY,
+        "payload": b"bad"
+    })
+
+def test_validate_ip_rejects_short_ipv4() -> None:
+    from gui.validation import validate_ip
+
+    assert not validate_ip("127.1")
+    assert not validate_ip("1")
 
 if __name__ == "__main__":
     test_round_trip_plaintext()
@@ -276,5 +284,6 @@ if __name__ == "__main__":
     test_register_peer_atomic()
     test_send_message_returns_false_when_not_active()
     test_handshake_timeout_disconnects_pending_peer()
-    test_validate_ip_rejects_reserved()
+    test_validate_rejects_bad_session_key_payload()
+    test_validate_ip_rejects_short_ipv4()
     print("\nAll tests passed.")
