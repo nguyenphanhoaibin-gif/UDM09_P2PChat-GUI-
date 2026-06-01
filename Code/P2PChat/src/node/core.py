@@ -6,6 +6,7 @@ from security.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
 
 HANDSHAKE_TIMEOUT = 5 # Seconds before a pending peer is dropped
+_AddressMap = dict[int, str]  # id(socket) -> address string
 
 class P2PNode:
     def __init__(
@@ -31,6 +32,9 @@ class P2PNode:
         self.peers_lock = threading.RLock()
         self.peers: dict[str, socket.socket] = {}
         self.peer_sessions: dict[str, dict] = {}
+
+        # This reverse mapping is used to find the peer address when we only have the socket (e.g. on disconnect).
+        self._sock_to_addr: _AddressMap = {}
 
         #self.crypto_handler = CryptoHandler()
         self.protocol_handler = ProtocolHandler()
@@ -74,6 +78,7 @@ class P2PNode:
 
             self.peers.clear()
             self.peer_sessions.clear()
+            self._sock_to_addr.clear()
 
         if self.server_socket is not None:
 
@@ -154,6 +159,7 @@ class P2PNode:
     # Message sending and receiving
     def send_message(self, message: str, peer_address: str) -> bool:
         """Send a message to a connected peer."""
+
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
             peer_socket = self.peers.get(peer_address)
@@ -191,7 +197,6 @@ class P2PNode:
                 packet = self.protocol_handler.receive_packet(peer_socket)
 
                 if packet is None:
-                    # Connection closed cleanly.
                     self.remove_peer(peer_socket)
                     break
 
@@ -244,13 +249,11 @@ class P2PNode:
                 sent += 1
             else:
                 failed += 1
-                
+
         return sent, failed
 
     # Internal handlers
-    def handle_handshake(
-        self, packet: dict, peer_socket: socket.socket
-    ) -> None:
+    def handle_handshake(self, packet: dict, peer_socket: socket.socket) -> None:
         
         if not self.protocol_handler.validate_packet(packet):
             print("[WARNING] Malformed handshake — disconnecting peer")
@@ -286,6 +289,7 @@ class P2PNode:
             "status": "ok",
             "public_key": RSAUtils.serialize_public_key(self.public_key),
         }
+
         try:
             peer_socket.sendall(self.protocol_handler.serialize(ack))
 
@@ -294,9 +298,7 @@ class P2PNode:
             self.remove_peer(peer_socket)
             return
 
-    def handle_handshake_ack(
-        self, packet: dict, peer_socket: socket.socket
-    ) -> None:
+    def handle_handshake_ack(self, packet: dict, peer_socket: socket.socket) -> None:
         
         if not self.protocol_handler.validate_packet(packet):
             print("[WARNING] Malformed handshake_ack — disconnecting peer")
@@ -304,6 +306,7 @@ class P2PNode:
             return
         
         peer_address = self.get_peer_address(peer_socket)
+
         if peer_address is None:
             return
 
@@ -322,28 +325,20 @@ class P2PNode:
             self.remove_peer(peer_socket)
             return
 
+        is_initiator = False
+
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
             if session is None:
                 return
             
             session["public_key"] = raw_key
+            is_initiator = session["is_initiator"]
 
-        with self.peers_lock:
-            session = self.peer_sessions.get(peer_address)
-
-        if session is None:
-            return
-        
-        if session["is_initiator"]:
+        if is_initiator:
             self._send_session_key(peer_socket, peer_address)
 
-
-
-
-    def handle_session_key(
-        self, packet: dict, peer_socket: socket.socket
-    ) -> None:
+    def handle_session_key(self, packet: dict, peer_socket: socket.socket) -> None:
         """Process the session key sent by the peer.  This is called by the 
         protocol handler after receiving a session_key packet."""
 
@@ -384,16 +379,11 @@ class P2PNode:
             session["state"] = "active"
             count = len(self.peers)
 
-        print(f"[INFO] Session key received — peer active: {peer_address} "
-              f"(peers: {count})")
+        print(f"[INFO] Session key received — peer active: {peer_address} (peers: {count})")
 
-        if self.on_connected is not None:
-            self.on_connected(peer_address)
+        self._fire_callback(self.on_connected, peer_address)
 
-
-    def handle_message(
-        self, packet: dict, peer_socket: socket.socket
-    ) -> None:
+    def handle_message(self, packet: dict, peer_socket: socket.socket) -> None:
         
         peer_address = self.get_peer_address(peer_socket)
 
@@ -425,23 +415,15 @@ class P2PNode:
             print(f"[WARNING] Decryption failed from {peer_address}: {error}")
             return
 
-        if self.on_message is not None:
-            self.on_message(payload)
-            
-        else:
-            print(f"[MESSAGE] {peer_address}: {payload}")
+        sender = packet.get("sender", "Unknown")
+        self._fire_callback(self.on_message, sender, payload)
     
     # Utility methods
     def get_peer_address(self, peer_socket: socket.socket) -> str | None:
-        """Return the address string for *peer_socket*, or None."""
+        """O(1) reverse lookup: socket → address string."""
 
         with self.peers_lock:
-            for address, sock in self.peers.items():
-
-                if sock == peer_socket:
-                    return address
-                
-        return None
+            return self._sock_to_addr.get(id(peer_socket))
 
     def register_peer(self, peer_address: str, sock: socket.socket, is_initiator: bool) -> bool:
         """Atomically register *peer_address*."""
@@ -451,6 +433,8 @@ class P2PNode:
                 return False
             
             self.peers[peer_address] = sock
+            self._sock_to_addr[id(sock)] = peer_address
+
             self.peer_sessions[peer_address] = {
                 "state": "pending",
                 "public_key": None,
@@ -465,14 +449,6 @@ class P2PNode:
         print(f"[INFO] Peer registered: {peer_address} — active peers: {count}")
         return True
 
-    def set_peer_state(self, peer_address: str, state: str) -> None:
-        with self.peers_lock:
-
-            session = self.peer_sessions.get(peer_address)
-
-            if session is not None:
-                session["state"] = state
-
     def remove_peer(self, peer_socket: socket.socket) -> None:
         peer_address = self.get_peer_address(peer_socket)
         remaining_peers = 0
@@ -482,6 +458,7 @@ class P2PNode:
             if peer_address is not None:
                 self.peers.pop(peer_address, None)
                 self.peer_sessions.pop(peer_address, None)
+                self._sock_to_addr.pop(id(peer_socket), None)
                 remaining_peers = len(self.peers)
 
         try:
@@ -594,7 +571,6 @@ class P2PNode:
             return
 
         crypto = CryptoHandler(key=fernet_key)
-
         became_active = False
 
         with self.peers_lock:
@@ -607,5 +583,14 @@ class P2PNode:
                 session["state"] = "active"
 
         print(f"[INFO] Session key sent to {peer_address}")
-        if became_active and self.on_connected is not None:
-            self.on_connected(peer_address)
+        if became_active:
+            self._fire_callback(self.on_connected, peer_address)
+
+    def _fire_callback(self, callback, *args) -> None:
+        if callback is None:
+            return
+        try:
+            callback(*args)
+            
+        except Exception as exc:
+            print(f"[ERROR] Callback {callback.__name__} raised: {exc}")
