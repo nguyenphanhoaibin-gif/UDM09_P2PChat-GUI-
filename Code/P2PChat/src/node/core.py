@@ -343,6 +343,11 @@ class P2PNode:
 
         if peer_address is None:
             return
+        
+        if not self.protocol_handler.validate_packet(packet):
+            print(f"[WARNING] Invalid session_key packet from {peer_address}")
+            self.remove_peer(peer_socket)
+            return
 
         encrypted_key_hex = packet.get("payload", "")
 
