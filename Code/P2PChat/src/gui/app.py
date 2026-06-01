@@ -147,15 +147,6 @@ class ChatApp(ctk.CTk):
         self.peer_listbox.bind("<ButtonRelease-1>", self.select_peer)
 
         ctk.CTkLabel(
-            self.sidebar_frame, text="My Port", font=("Arial", 11)
-        ).pack(padx=10, anchor="w")
-
-        self.my_port_entry = ctk.CTkEntry(
-            self.sidebar_frame, placeholder_text=str(DEFAULT_LISTEN_PORT)
-        )
-        self.my_port_entry.pack(padx=10, pady=(0, 8), fill="x")
-
-        ctk.CTkLabel(
             self.sidebar_frame, text="Peer IP", font=("Arial", 11)
         ).pack(padx=10, anchor="w")
 
