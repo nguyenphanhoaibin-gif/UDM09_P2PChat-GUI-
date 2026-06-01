@@ -1,8 +1,22 @@
+import sys
 from gui.app import ChatApp
+from gui.validation import validate_port
+
+DEFAULT_PORT = 12000 # Default port for P2P chat
 
 def main() -> None:
-    """Start the GUI application."""
-    app = ChatApp()
+    """Parse command-line arguments and start the chat application."""
+    port = DEFAULT_PORT
+
+    if len(sys.argv) > 1:
+        port_text = sys.argv[1]
+
+        if not validate_port(port_text):
+            print("Invalid port. Use a number from 1 to 65535.")
+            return
+        port = int(port_text)
+
+    app = ChatApp(listen_port=port)
     app.mainloop()
 
 if __name__ == "__main__":

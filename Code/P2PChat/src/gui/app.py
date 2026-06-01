@@ -2,10 +2,10 @@ import customtkinter as ctk
 from gui.validation import validate_ip, validate_port
 from node.core import P2PNode
 
-DEFAULT_LISTEN_PORT = 12001 # Default port for P2P chat; can be changed in app.py if needed.
+DEFAULT_LISTEN_PORT = 12000 # Default port for P2P chat; can be changed in app.py if needed.
 
 class ChatApp(ctk.CTk):
-    def __init__(self) -> None:
+    def __init__(self, listen_port: int = DEFAULT_LISTEN_PORT) -> None:
         super().__init__()
 
         self.connected_peers: list[str] = []
@@ -13,7 +13,7 @@ class ChatApp(ctk.CTk):
         
         self.node = P2PNode(
             host="0.0.0.0",
-            port=DEFAULT_LISTEN_PORT,
+            port=listen_port,
             on_message=self.handle_peer_message,
             on_disconnect=self.handle_disconnect,
             on_connected=self.handle_connected
@@ -23,7 +23,7 @@ class ChatApp(ctk.CTk):
 
         self.setup_window()
         self.setup_layout()
-        self.add_system_message(f"P2P Node started — listening on port {DEFAULT_LISTEN_PORT}.")
+        self.add_system_message(f"P2P Node started — listening on port {listen_port}.")
 
     # Layout and event handlers
     def setup_window(self) -> None:
