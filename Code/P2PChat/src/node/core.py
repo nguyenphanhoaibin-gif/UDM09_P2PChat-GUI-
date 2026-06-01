@@ -587,12 +587,17 @@ class P2PNode:
 
         crypto = CryptoHandler(key=fernet_key)
 
+        became_active = False
+
         with self.peers_lock:
             session = self.peer_sessions.get(peer_address)
 
             if session is not None:
+                became_active = session.get("state") != "active"
                 session["session_key"] = fernet_key
                 session["crypto"] = crypto
                 session["state"] = "active"
 
         print(f"[INFO] Session key sent to {peer_address}")
+        if became_active and self.on_connected is not None:
+            self.on_connected(peer_address)
