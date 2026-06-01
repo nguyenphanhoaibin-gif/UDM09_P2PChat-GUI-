@@ -227,7 +227,7 @@ class P2PNode:
                 self.remove_peer(peer_socket)
                 break
 
-    def broadcast_message(self, message: str) -> None:
+    def broadcast_message(self, message: str) -> tuple[int, int]:
         """Send *message* to every active peer."""
         with self.peers_lock:
             active = [
@@ -236,8 +236,16 @@ class P2PNode:
                 if session["state"] == "active"
             ]
 
+        sent = 0
+        failed = 0
+
         for peer_address in active:
-            self.send_message(message, peer_address)
+            if self.send_message(message, peer_address):
+                sent += 1
+            else:
+                failed += 1
+                
+        return sent, failed
 
     # Internal handlers
     def handle_handshake(

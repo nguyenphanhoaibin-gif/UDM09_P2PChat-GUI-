@@ -266,11 +266,18 @@ class ChatApp(ctk.CTk):
             self.add_system_message("No connected peers.")
             return
 
-        self.chat_box.insert("end", f"You (broadcast): {message}\n")
-        self.chat_box.see("end")
-        self.message_entry.delete(0, "end")
+        sent, failed = self.node.broadcast_message(message)
 
-        self.node.broadcast_message(message)
+        if sent > 0:
+            self.chat_box.insert("end", f"You (broadcast): {message}\n")
+            self.chat_box.see("end")
+            self.message_entry.delete(0, "end")
+
+        if failed > 0:
+            self.add_system_message(f"Broadcast failed for {failed} peer(s).")
+        
+        if sent == 0:
+            self.add_system_message("Broadcast failed. No peer received the message.")
         
     def handle_enter(self, _event) -> None:
         self.send_message()
