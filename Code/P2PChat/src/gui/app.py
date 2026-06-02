@@ -1,4 +1,5 @@
 import customtkinter as ctk
+from gui.chatbox import ChatBox
 from gui.validation import validate_ip, validate_port
 from node.core import P2PNode
 import threading
@@ -56,10 +57,7 @@ class ChatApp(ctk.CTk):
         self.chat_frame.grid_columnconfigure(0, weight=1)
 
         # Chat display
-        self.chat_box = ctk.CTkTextbox(
-            self.chat_frame,
-            corner_radius=10
-        )
+        self.chat_box = ChatBox(self.chat_frame, corner_radius=10)
 
         self.chat_box.grid(
             row=0,
@@ -314,8 +312,7 @@ class ChatApp(ctk.CTk):
 
         if sent:
             me = self.node.username
-            self.chat_box.insert("end", f"{me} → {selected}: {message}\n")
-            self.chat_box.see("end")
+            self.chat_box.add_sent(me, selected, message)
             self.message_entry.delete(0, "end")
 
         else:
@@ -345,8 +342,7 @@ class ChatApp(ctk.CTk):
 
         if sent > 0:
             me = self.node.username
-            self.chat_box.insert("end", f"{me} (broadcast): {message}\n")
-            self.chat_box.see("end")
+            self.chat_box.add_sent(me, "everyone", message)
             self.message_entry.delete(0, "end")
 
         if failed > 0:
@@ -355,8 +351,9 @@ class ChatApp(ctk.CTk):
         if sent == 0:
             self.add_system_message("Broadcast failed. No peer received the message.")
         
-    def handle_enter(self, _event) -> None:
+    def handle_enter(self, _event) -> str:
         self.send_message()
+        return "break"  # prevent Enter from propagating to the widget
 
     def update_peer_list(self) -> None:
         """Refresh the connected-peers display in the sidebar."""
@@ -389,22 +386,13 @@ class ChatApp(ctk.CTk):
             self.add_system_message(f"Selected peer: {candidate}")
 
     # Message handling (called from networking thread)
-    def display_peer_message(self, sender: str, message: str) -> None:
-        """Display a message received from a peer."""
-
-        self.chat_box.insert("end", f"{sender}: {message}\n")
-        self.chat_box.see("end")
-
     def add_system_message(self, message: str) -> None:
-        """Display a system message in the chat box."""
-        
-        self.chat_box.insert("end", f"[SYSTEM] {message}\n")
-        self.chat_box.see("end")
+        """Display a system message. Safe to call from any thread."""
+        self.chat_box.add_system(message)
 
     def handle_peer_message(self, sender: str, payload: str) -> None:
-        """Called from networking thread — schedule GUI update."""
-        
-        self.after(0, lambda: self.display_peer_message(sender, payload))
+    
+        self.chat_box.add_received(sender, payload)
 
     def handle_connected(self, peer_address: str) -> None:
         """Handle a new peer connection event (called from networking thread)."""
