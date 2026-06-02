@@ -1,17 +1,3 @@
-"""gui/chatbox.py — realtime chat display widget.
-
-Design goals
-------------
-* Thread-safe: every public method may be called from any thread (network,
-  timer, etc.).  All Tk mutations happen exclusively on the main thread.
-* Spam-resistant: messages are queued; a single scheduled flush drains the
-  entire queue in one Tk batch.  Only one state-toggle pair (normal→disabled)
-  per flush regardless of how many messages arrived.
-* Smart auto-scroll: scroll to bottom only when the viewport was already at
-  (or near) the bottom — never hijacks the user's scroll position.
-* No duplicate rendering: the deque + single-flush model means a message
-  cannot be rendered twice even under burst traffic.
-"""
 
 from __future__ import annotations
 
