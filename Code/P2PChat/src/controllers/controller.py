@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, Callable, Tuple
-from node.core import P2PNode
+from network.node import P2PNode
 
 logger = logging.getLogger(__name__)
 

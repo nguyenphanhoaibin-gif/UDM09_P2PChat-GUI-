@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cryptography.fernet import InvalidToken
 from security.crypto import CryptoHandler
-from security.protocol import PacketType, ProtocolHandler
+from message.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
 
 class FakeSocket:
@@ -175,7 +175,7 @@ def test_load_public_key_rejects_garbage() -> None:
 
 def test_register_peer_atomic() -> None:
     """register_peer returns False on second call for same address."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
     import socket as _socket
 
     node = P2PNode(host="127.0.0.1", port=19999)
@@ -193,7 +193,7 @@ def test_register_peer_atomic() -> None:
 
 def test_get_peer_address_o1() -> None:
     """get_peer_address uses O(1) reverse lookup via _sock_to_addr."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
     import socket as _socket
 
     node = P2PNode(host="127.0.0.1", port=19996)
@@ -212,7 +212,7 @@ def test_get_peer_address_o1() -> None:
 
 def test_send_message_returns_false_when_not_active() -> None:
     """send_message returns False when peer state is not active."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
     import socket as _socket
 
     node = P2PNode(host="127.0.0.1", port=19998)
@@ -230,7 +230,7 @@ def test_send_message_returns_false_when_not_active() -> None:
 def test_handshake_timeout_disconnects_pending_peer() -> None:
     """Pending peers are disconnected after HANDSHAKE_TIMEOUT seconds."""
     import socket as _socket
-    from node import core as _core
+    from Code.P2PChat.src.network import node as _core
 
     original_timeout = _core.HANDSHAKE_TIMEOUT
     _core.HANDSHAKE_TIMEOUT = 0.1
@@ -258,7 +258,7 @@ def test_handshake_timeout_disconnects_pending_peer() -> None:
 
 def test_callback_exception_does_not_propagate() -> None:
     """_fire_callback must not raise even if callback raises."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
 
     node = P2PNode(host="127.0.0.1", port=19990)
 
@@ -272,7 +272,7 @@ def test_callback_exception_does_not_propagate() -> None:
 
 def test_on_message_receives_sender_and_payload() -> None:
     """on_message callback receives (sender, payload) — not just payload."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
     import socket as _socket
 
     received: list = []
@@ -309,7 +309,7 @@ def test_on_message_receives_sender_and_payload() -> None:
 
 def test_remove_peer_cleans_reverse_map() -> None:
     """remove_peer must also clean _sock_to_addr to avoid stale entries."""
-    from node.core import P2PNode
+    from Code.P2PChat.src.network.node import P2PNode
     import socket as _socket
 
     node = P2PNode(host="127.0.0.1", port=19988)

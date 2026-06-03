@@ -1,8 +1,8 @@
 import customtkinter as ctk
 from gui.chatbox import ChatBox
 from gui.validation import validate_ip, validate_port
-from controller import ChatController
-from config import configure_logging, DEFAULT_LISTEN_PORT
+from controllers.controller import ChatController
+from app.config import configure_logging, DEFAULT_LISTEN_PORT
 import threading
 
 configure_logging()

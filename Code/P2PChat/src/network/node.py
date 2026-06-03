@@ -2,7 +2,7 @@ import socket
 import threading
 from cryptography.fernet import Fernet, InvalidToken
 from security.crypto import CryptoHandler
-from security.protocol import PacketType, ProtocolHandler
+from message.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
 
 HANDSHAKE_TIMEOUT = 5 # Seconds before a pending peer is dropped
