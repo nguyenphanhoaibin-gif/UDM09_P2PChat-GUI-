@@ -1,11 +1,10 @@
 import customtkinter as ctk
 from gui.chatbox import ChatBox
 from gui.validation import validate_ip, validate_port
-from controller import ChatController
-from config import configure_logging, DEFAULT_LISTEN_PORT
+from node.core import P2PNode
 import threading
 
-configure_logging()
+DEFAULT_LISTEN_PORT = 12000 # Default port for P2P chat; can be changed in app.py if needed.
 
 class ChatApp(ctk.CTk):
     def __init__(self, listen_port: int = DEFAULT_LISTEN_PORT) -> None:
@@ -14,8 +13,8 @@ class ChatApp(ctk.CTk):
         self._peers_lock = threading.Lock()
         self.connected_peers: list[str] = []
         self.selected_peer: str | None = None
-
-        self.controller: ChatController | None = None
+        
+        self.node: P2PNode | None = None
         self._listen_port = listen_port
 
         self.setup_window()
@@ -210,11 +209,11 @@ class ChatApp(ctk.CTk):
             padx=10, pady=(2, 15), fill="x"
         )
     
-    # Controller / node management
+    # Node management
     def start_node(self) -> None:
-        """Start the node via the ChatController."""
+        """Start the P2PNode with the chosen username and listen port."""
 
-        if self.controller is not None:
+        if self.node is not None:
             self.add_system_message("Node already started.")
             return
 
@@ -232,31 +231,34 @@ class ChatApp(ctk.CTk):
 
         listen_port = int(port_text)
 
-        # create controller with GUI callbacks
-        self.controller = ChatController(
-            on_system=self.add_system_message,
+        self.node = P2PNode(
+            host="0.0.0.0",
+            port=listen_port,
+            username=username,
             on_message=self.handle_peer_message,
-            on_connected=self.handle_connected,
             on_disconnect=self.handle_disconnect,
-            on_peers_update=self.update_peer_list,
+            on_connected=self.handle_connected,
         )
 
-        success, msg = self.controller.start_node("0.0.0.0", listen_port, username)
+        try:
+            self.node.start_server()
 
-        if not success:
-            self.add_system_message(f"Could not start on port {listen_port}: {msg}")
-            self.controller = None
+        except OSError as error:
+            self.add_system_message(f"Could not start on port {listen_port}: {error}")
+            self.node = None
             return
 
         self.start_button.configure(state="disabled")
         self.username_entry.configure(state="disabled")
         self.listen_port_entry.configure(state="disabled")
-        self.add_system_message(msg)
+        self.add_system_message(
+            f"Started as '{username}' — listening on port {listen_port}."
+        )
 
     # Event handlers
     def connect_to_peer(self) -> None:
         """Handle the Connect button."""
-        if self.controller is None:
+        if self.node is None:
             self.add_system_message("Start the node first.")
             return
 
@@ -277,7 +279,7 @@ class ChatApp(ctk.CTk):
 
         self.add_system_message(f"Connecting to {ip}:{port}…")
 
-        if not self.controller.connect_to_peer(ip, int(port)):
+        if not self.node.connect_to_peer(ip, int(port)):
             self.add_system_message(f"Could not connect to {ip}:{port}.")
             return
 
@@ -285,7 +287,7 @@ class ChatApp(ctk.CTk):
 
     def send_message(self) -> None:
         """Handle the Send button."""
-        if self.controller is None:
+        if self.node is None:
             self.add_system_message("Start the node first.")
             return
 
@@ -306,10 +308,10 @@ class ChatApp(ctk.CTk):
             self.add_system_message("No peer selected.")
             return
         
-        sent = self.controller.send_message(message, selected)
+        sent = self.node.send_message(message, selected)
 
         if sent:
-            me = username = self.username_entry.get().strip() or "me"
+            me = self.node.username
             self.chat_box.add_sent(me, selected, message)
             self.message_entry.delete(0, "end")
 
@@ -320,7 +322,7 @@ class ChatApp(ctk.CTk):
 
     def broadcast_message(self) -> None:
         """Handle the Broadcast button."""
-        if self.controller is None:
+        if self.node is None:
             self.add_system_message("Start the node first.")
             return
         
@@ -336,10 +338,10 @@ class ChatApp(ctk.CTk):
             self.add_system_message("No connected peers.")
             return
 
-        sent, failed = self.controller.broadcast_message(message)
+        sent, failed = self.node.broadcast_message(message)
 
         if sent > 0:
-            me = self.username_entry.get().strip() or "me"
+            me = self.node.username
             self.chat_box.add_sent(me, "everyone", message)
             self.message_entry.delete(0, "end")
 
@@ -383,12 +385,13 @@ class ChatApp(ctk.CTk):
             self.update_peer_list()  # refresh markers
             self.add_system_message(f"Selected peer: {candidate}")
 
-    # Message handling (called from networking thread via controller)
+    # Message handling (called from networking thread)
     def add_system_message(self, message: str) -> None:
         """Display a system message. Safe to call from any thread."""
         self.chat_box.add_system(message)
 
     def handle_peer_message(self, sender: str, payload: str) -> None:
+    
         self.chat_box.add_received(sender, payload)
 
     def handle_connected(self, peer_address: str) -> None:
@@ -422,6 +425,6 @@ class ChatApp(ctk.CTk):
         self.after(0, update)
     
     def handle_close(self) -> None:
-        if self.controller is not None:
-            self.controller.stop()
+        if self.node is not None:
+            self.node.stop_server()
         self.destroy()
