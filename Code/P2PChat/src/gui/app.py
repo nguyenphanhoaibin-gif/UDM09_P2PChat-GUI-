@@ -209,6 +209,9 @@ class ChatApp(ctk.CTk):
         self.send_button.pack(
             padx=10, pady=(2, 15), fill="x"
         )
+
+        self.discover_button = ctk.CTkButton(self.sidebar_frame, text="Discover", command=self.discover_peers)
+        self.discover_button.pack( fill="x", padx=10, pady=5)
     
     # Controller / node management
     def start_node(self) -> None:
@@ -382,6 +385,25 @@ class ChatApp(ctk.CTk):
                 self.selected_peer = candidate
             self.update_peer_list()  # refresh markers
             self.add_system_message(f"Selected peer: {candidate}")
+
+    def discover_peers(self):
+        if self.controller is None:
+            self.add_system_message("Start the node first.")
+            return
+        self.add_system_message("Discovering peers on the local network…")
+        self.controller.discover_peers()
+        self.after(1000, self.refresh_discovered_peers)
+
+    def refresh_discovered_peers(self):
+        if self.controller is None:
+            return
+        
+        peers = (self.controller.get_discovered_peers())
+        self.add_system_message(f"Discovered {len(peers)} peer(s) on the local network.")
+        
+        for addr, info in peers.items():
+            username = info.get("username", "unknown")
+            self.add_system_message(f" - {username} at {addr}")
 
     # Message handling (called from networking thread via controller)
     def add_system_message(self, message: str) -> None:

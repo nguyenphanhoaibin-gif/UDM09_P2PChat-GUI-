@@ -4,6 +4,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from security.crypto import CryptoHandler
 from message.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
+from network.discovery import DiscoveryService
 
 HANDSHAKE_TIMEOUT = 5 # Seconds before a pending peer is dropped
 _AddressMap = dict[int, str]  # id(socket) -> address string
@@ -18,14 +19,16 @@ class P2PNode:
         on_disconnect=None,
         on_connected=None
     ) -> None:
+        
         self.host = host
         self.port = port
         self.username = username
 
+        # Callbacks for GUI updates and event handling
         self.on_message = on_message
         self.on_disconnect = on_disconnect
         self.on_connected = on_connected
-
+        
         self.server_socket: socket.socket | None = None
 
         # All three dicts are protected by peers_lock.
@@ -42,8 +45,14 @@ class P2PNode:
         # RSA key pair — used only for session-key exchange.
         self.private_key, self.public_key = (RSAUtils.generate_key_pair())
 
+        # For replay attack mitigation: store recently seen message IDs.
         self.seen_messages = set()
         self.receive_threads = []
+
+        # Discovery service for local peer discovery on the LAN.
+        self.discovered_peers: dict[str, dict] = {}
+        self.discovery = DiscoveryService(self.username,self.port)
+        self.discovery.on_peer_found = (self._handle_discovered_peer)
 
         self.is_running = False
 
@@ -56,6 +65,7 @@ class P2PNode:
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen()
         self.is_running = True
+        self.discovery.start()
 
         print(f"[INFO] Listening on {self.host}:{self.port}")
         
@@ -68,6 +78,7 @@ class P2PNode:
     def stop_server(self) -> None:
         """Stop the TCP server and close all connections."""
         self.is_running = False
+        self.discovery.stop()
 
         with self.peers_lock:
 
@@ -259,6 +270,13 @@ class P2PNode:
                 failed += 1
 
         return sent, failed
+    
+    def discover_peers(self) -> None:
+        """Trigger the discovery service to broadcast a discovery packet."""
+        self.discovery.discover()
+
+    def get_discovered_peers(self) -> dict[str, dict]:
+        return dict(self.discovered_peers)
 
     # Internal handlers
     def handle_handshake(self, packet: dict, peer_socket: socket.socket) -> None:
@@ -639,3 +657,30 @@ class P2PNode:
             
         except Exception as exc:
             print(f"[ERROR] Callback {callback.__name__} raised: {exc}")
+
+    def _handle_discovered_peer(self,  packet: dict, address: tuple[str, int]) -> None:
+
+        peer_ip = address[0]
+        peer_port = packet.get("port")
+
+        if peer_port is None:
+            return
+
+        peer_address = (
+            f"{peer_ip}:{peer_port}"
+        )
+
+        if peer_address in self.peers:
+            return
+
+        self.discovered_peers[peer_address] = {
+            "username": packet.get(
+                "username",
+                "Unknown"
+            )
+        }
+
+        print(
+            f"[DISCOVERY] Found peer: "
+            f"{peer_address}"
+        )

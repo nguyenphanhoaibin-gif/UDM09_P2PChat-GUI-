@@ -70,6 +70,15 @@ class ChatController:
             self.node.stop_server()
             self.node = None
 
+    def discover_peers(self):
+        if self.node is not None:
+            self.node.discover_peers()
+
+    def get_discovered_peers(self):
+        if self.node is not None:
+            return self.node.get_discovered_peers()
+        return {}
+
     # Internal safe callback invocation
     def _safe_fire(self, cb: Callable, *args) -> None:
         try:
