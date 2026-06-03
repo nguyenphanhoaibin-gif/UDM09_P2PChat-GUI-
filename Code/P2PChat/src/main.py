@@ -1,12 +1,8 @@
 import sys
 from gui.app import ChatApp
 from gui.validation import validate_port
-from config import configure_logging, DEFAULT_LISTEN_PORT
 
-configure_logging()
-
-DEFAULT_PORT = DEFAULT_LISTEN_PORT # Default port for P2P chat
-
+DEFAULT_PORT = 12000 # Default port for P2P chat
 
 def main() -> None:
     """Parse command-line arguments and start the chat application."""
@@ -22,7 +18,6 @@ def main() -> None:
 
     app = ChatApp(listen_port=port)
     app.mainloop()
-
 
 if __name__ == "__main__":
     main()
