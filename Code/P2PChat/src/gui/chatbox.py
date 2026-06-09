@@ -6,7 +6,6 @@ from collections import deque
 from datetime import datetime
 from typing import Deque
 
-import tkinter as tk
 import customtkinter as ctk
 
 
@@ -62,7 +61,7 @@ class ChatBox(ctk.CTkFrame):
         self._tb_widget.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
 
     def _setup_tags(self) -> None:
-        raw: tk.Text = self._tb_widget._textbox
+        raw = self._tb_widget._textbox
 
         raw.tag_configure(
             _TAG_SENT,
@@ -119,7 +118,7 @@ class ChatBox(ctk.CTkFrame):
         self._request_flush()
 
     def _request_flush(self) -> None:
-        """Schedule exactly one flush on the Tk main thread.
+        """Schedule exactly one flush on the csTk main thread.
 
         Uses a lock so that even if many threads call _request_flush
         simultaneously only a single after(0, _flush) is registered.
@@ -129,15 +128,15 @@ class ChatBox(ctk.CTkFrame):
                 return          # flush already on its way
             self._flush_sched = True
 
-        # after() is thread-safe in Tkinter — safe to call from any thread.
+        # after() is thread-safe in csTkinter — safe to call from any thread.
         self.after(0, self._flush)
 
     # ------------------------------------------------------------------ #
-    # Batch flush — runs exclusively on the Tk main thread                #
+    # Batch flush — runs exclusively on the csTk main thread                #
     # ------------------------------------------------------------------ #
 
     def _flush(self) -> None:
-        """Drain the entire queue in one Tk batch.
+        """Drain the entire queue in one csTk batch.
 
         Only one state("normal") / state("disabled") toggle happens per
         flush, keeping the widget fast even under rapid message bursts.
@@ -150,7 +149,7 @@ class ChatBox(ctk.CTkFrame):
         if not self._queue:
             return
 
-        raw: tk.Text = self._tb_widget._textbox
+        raw = self._tb_widget._textbox
         at_bottom = _is_at_bottom(raw)
 
         self._tb_widget.configure(state="normal")
