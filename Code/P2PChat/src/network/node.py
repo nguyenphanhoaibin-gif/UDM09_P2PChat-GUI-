@@ -11,8 +11,8 @@ from network.discovery import DiscoveryService, PEER_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
-HANDSHAKE_TIMEOUT = 5   # seconds before a pending peer is dropped
-_AddressMap = dict[int, str]  # id(socket) -> address string
+HANDSHAKE_TIMEOUT = 5  # seconds before a pending peer is dropped
+_AddressMap = dict[int, str] # id(socket) -> address string
 
 
 class P2PNode:
@@ -26,25 +26,25 @@ class P2PNode:
         on_connected=None,
         on_peer_discovered=None,
     ) -> None:
-        self.host     = host
-        self.port     = port
+        self.host = host
+        self.port = port
         self.username = username
 
         # ── GUI callbacks ──────────────────────────────────────────────
-        self.on_message         = on_message
-        self.on_disconnect      = on_disconnect
-        self.on_connected       = on_connected
+        self.on_message = on_message
+        self.on_disconnect = on_disconnect
+        self.on_connected = on_connected
         # Called with (addr, info_dict) when a new LAN peer appears/disappears.
         self.on_peer_discovered = on_peer_discovered
 
         self.server_socket: socket.socket | None = None
 
         # ── Connected-peer state ────────────────────────────────────────
-        self.peers_lock   = threading.RLock()
-        self.peers:         dict[str, socket.socket] = {}
-        self.peer_sessions: dict[str, dict]          = {}
+        self.peers_lock = threading.RLock()
+        self.peers: dict[str, socket.socket] = {}
+        self.peer_sessions: dict[str, dict] = {}
 
-        self._sock_to_addr: _AddressMap              = {}
+        self._sock_to_addr: _AddressMap = {}
 
         # ── Protocol / crypto ──────────────────────────────────────────
         self.protocol_handler = ProtocolHandler()
@@ -56,15 +56,15 @@ class P2PNode:
         # ── Discovery ──────────────────────────────────────────────────
         self.discovery_lock     = threading.RLock()
         # key: "ip:port" → {"username", "ip", "port", "status", "last_seen"}
-        self.discovered_peers:  dict[str, dict]      = {}
+        self.discovered_peers:  dict[str, dict] = {}
 
         self.discovery = DiscoveryService(self.username, self.port)
         self.discovery.on_peer_found = self._handle_discovered_peer
 
         # ── Misc ───────────────────────────────────────────────────────
-        self.receive_threads:    list[threading.Thread] = []
-        self.expiration_thread:  threading.Thread | None = None
-        self.is_running          = False
+        self.receive_threads: list[threading.Thread] = []
+        self.expiration_thread: threading.Thread | None = None
+        self.is_running = False
 
     # ------------------------------------------------------------------ #
     # Server lifecycle #
