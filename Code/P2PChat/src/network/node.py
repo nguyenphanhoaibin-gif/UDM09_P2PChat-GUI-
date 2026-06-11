@@ -1,10 +1,12 @@
 import socket
 import threading
+import time
 from cryptography.fernet import Fernet, InvalidToken
 from security.crypto import CryptoHandler
 from message.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
 from network.discovery import DiscoveryService
+from network.discovery import PEER_TIMEOUT
 
 HANDSHAKE_TIMEOUT = 5 # Seconds before a pending peer is dropped
 _AddressMap = dict[int, str]  # id(socket) -> address string
@@ -50,8 +52,10 @@ class P2PNode:
         self.receive_threads = []
 
         # Discovery service for local peer discovery on the LAN.
+        self.discovery_lock = threading.RLock()
         self.discovered_peers: dict[str, dict] = {}
         self.discovery = DiscoveryService(self.username,self.port)
+        self.expiration_thread = None
         self.discovery.on_peer_found = (self._handle_discovered_peer)
 
         self.is_running = False
@@ -66,6 +70,8 @@ class P2PNode:
         self.server_socket.listen()
         self.is_running = True
         self.discovery.start()
+        self.expiration_thread = threading.Thread(target=self.cleanup_expired_peers, daemon=True, name="DiscoveryExpiration")
+        self.expiration_thread.start()
 
         print(f"[INFO] Listening on {self.host}:{self.port}")
         
@@ -276,7 +282,36 @@ class P2PNode:
         self.discovery.discover()
 
     def get_discovered_peers(self) -> dict[str, dict]:
-        return dict(self.discovered_peers)
+        with self.discovery_lock:
+            return dict(self.discovered_peers)
+    
+    def cleanup_expired_peers(self) -> None:
+        """Remove peers that haven't been seen for a while from the discovered_peers list."""
+
+        while self.is_running:
+            now = time.time()
+
+            with self.discovery_lock:
+                expired = []
+
+                for peer_address, peer in self.discovered_peers.items():
+                    
+                    if now - peer["last_seen"] > PEER_TIMEOUT:
+                        expired.append(peer_address)
+
+                for peer_address in expired:
+
+                    self.discovered_peers.pop(
+                        peer_address,
+                        None
+                    )
+
+                    print(
+                        f"[DISCOVERY] Peer expired: "
+                        f"{peer_address}"
+                    )
+
+            time.sleep(1)
 
     # Internal handlers
     def handle_handshake(self, packet: dict, peer_socket: socket.socket) -> None:
@@ -673,12 +708,14 @@ class P2PNode:
         if peer_address in self.peers:
             return
 
-        self.discovered_peers[peer_address] = {
-            "username": packet.get(
-                "username",
-                "Unknown"
-            )
-        }
+        with self.discovery_lock:
+
+            self.discovered_peers[peer_address] = {
+                "username": packet.get("username"),
+                "port": peer_port,
+                "ip": peer_ip,
+                "last_seen": time.time()
+            }
 
         print(
             f"[DISCOVERY] Found peer: "

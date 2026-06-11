@@ -1,9 +1,12 @@
 import json
 import socket
 import threading
+import time
 from typing import Callable, Optional
 
 DISCOVERY_PORT = 15000
+PEER_TIMEOUT = 15
+PRESENCE_INTERVAL = 5
 
 DISCOVERY = "discovery"
 DISCOVERY_RESPONSE = "discovery_response"
@@ -15,14 +18,11 @@ class DiscoveryService:
         username: str,
         listen_port: int
     ):
-
         self.username = username
         self.listen_port = listen_port
-
+        self.instance_id = (f"{username}-{listen_port}")
         self.running = False
-
         self.socket: Optional[socket.socket] = None
-
         self.listener_thread: Optional[
             threading.Thread
         ] = None
@@ -30,6 +30,9 @@ class DiscoveryService:
         self.on_peer_found: Optional[
             Callable[[dict, tuple[str, int]], None]
         ] = None
+
+        self.broadcast_thread = None
+        
 
     def start(self):
 
@@ -61,6 +64,9 @@ class DiscoveryService:
         )
 
         self.listener_thread.start()
+        self.broadcast_thread = threading.Thread(target=self.broadcast_loop, daemon=True, name="DiscoveryBroadcast")
+        self.broadcast_thread.start()
+
 
     def listen_loop(self):
 
@@ -103,6 +109,10 @@ class DiscoveryService:
         packet_type = packet.get("type")
 
         if packet_type == DISCOVERY:
+
+            if packet.get("instance_id") == self.instance_id:
+                return
+            
             self.send_response(address)
 
         elif packet_type == DISCOVERY_RESPONSE:
@@ -148,6 +158,7 @@ class DiscoveryService:
 
             packet = {
                 "type": DISCOVERY,
+                "instance_id": self.instance_id,
                 "username": self.username,
                 "port": self.listen_port
             }
@@ -182,3 +193,17 @@ class DiscoveryService:
             and self.listener_thread.is_alive()
         ):
             self.listener_thread.join(timeout=1)
+
+    def broadcast_loop(self) -> None:
+
+        while self.running:
+
+            try:
+                self.discover()
+
+            except OSError as error:
+                print(
+                    f"[DISCOVERY] Broadcast error: {error}"
+                )
+
+            time.sleep(PRESENCE_INTERVAL)
