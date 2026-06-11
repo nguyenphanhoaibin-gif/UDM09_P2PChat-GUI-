@@ -1,16 +1,18 @@
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 from gui.app import ChatApp
 from gui.validation import validate_port
 from config import configure_logging, DEFAULT_LISTEN_PORT
 
 configure_logging()
 
-DEFAULT_PORT = DEFAULT_LISTEN_PORT # Default port for P2P chat
-
 
 def main() -> None:
     """Parse command-line arguments and start the chat application."""
-    port = DEFAULT_PORT
+    port = DEFAULT_LISTEN_PORT
 
     if len(sys.argv) > 1:
         port_text = sys.argv[1]
@@ -18,6 +20,7 @@ def main() -> None:
         if not validate_port(port_text):
             print("Invalid port. Use a number from 1 to 65535.")
             return
+
         port = int(port_text)
 
     app = ChatApp(listen_port=port)

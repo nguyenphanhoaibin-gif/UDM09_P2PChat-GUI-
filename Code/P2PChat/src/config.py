@@ -2,7 +2,7 @@
 import logging
 
 DEFAULT_LISTEN_PORT = 12000
-
+DISCOVERY_PORT = 15000
 
 def configure_logging() -> None:
     logging.basicConfig(

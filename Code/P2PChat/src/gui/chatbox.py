@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import threading
@@ -9,8 +8,6 @@ from typing import Deque
 import tkinter as tk
 import customtkinter as ctk
 
-
-# ─── tag names ────────────────────────────────────────────────────────────────
 _TAG_SENT     = "sent"
 _TAG_RECEIVED = "received"
 _TAG_SYSTEM   = "system"
@@ -23,20 +20,9 @@ _Item = tuple
 
 
 class ChatBox(ctk.CTkFrame):
-    """Thread-safe, colour-coded, batched-render chat display widget.
+    """Thread-safe, colour-coded, batched-render chat display widget."""
 
-    Usage
-    -----
-    >>> box = ChatBox(parent)
-    >>> box.add_sent("Alice", "Bob", "hello")       # from any thread
-    >>> box.add_received("Bob", "hi there")         # from any thread
-    >>> box.add_system("Peer connected: 10.0.0.1")  # from any thread
-    """
-
-    # ------------------------------------------------------------------ #
-    # Lifecycle                                                            #
-    # ------------------------------------------------------------------ #
-
+    # Lifecycle #
     def __init__(self, master, **kwargs) -> None:
         super().__init__(master, **kwargs)
 
@@ -90,9 +76,7 @@ class ChatBox(ctk.CTkFrame):
         raw.tag_configure(_TAG_SEP,   foreground="#37474F")
 
     # ------------------------------------------------------------------ #
-    # Public API — thread-safe                                            #
-    # ------------------------------------------------------------------ #
-
+    # Public API — thread-safe #
     def add_sent(self, sender: str, recipient: str, message: str) -> None:
         """Enqueue an outgoing message bubble."""
         self._enqueue(("sent", sender, recipient, message))
@@ -110,9 +94,7 @@ class ChatBox(ctk.CTkFrame):
         self._enqueue(("clear",))
 
     # ------------------------------------------------------------------ #
-    # Queue management                                                     #
-    # ------------------------------------------------------------------ #
-
+    # Queue management #
     def _enqueue(self, item: _Item) -> None:
         """Append *item* to the render queue and request a flush."""
         self._queue.append(item)
@@ -125,16 +107,17 @@ class ChatBox(ctk.CTkFrame):
         simultaneously only a single after(0, _flush) is registered.
         """
         with self._flush_lock:
+
             if self._flush_sched:
                 return          # flush already on its way
+            
             self._flush_sched = True
 
         # after() is thread-safe in Tkinter — safe to call from any thread.
         self.after(0, self._flush)
 
     # ------------------------------------------------------------------ #
-    # Batch flush — runs exclusively on the Tk main thread                #
-    # ------------------------------------------------------------------ #
+    # Batch flush — runs exclusively on the Tk main thread #
 
     def _flush(self) -> None:
         """Drain the entire queue in one Tk batch.
@@ -155,16 +138,21 @@ class ChatBox(ctk.CTkFrame):
 
         self._tb_widget.configure(state="normal")
         try:
+
             while self._queue:
+
                 item = self._queue.popleft()
                 kind = item[0]
 
                 if kind == "sent":
                     _render_sent(raw, item[1], item[2], item[3])
+
                 elif kind == "received":
                     _render_received(raw, item[1], item[2])
+
                 elif kind == "system":
                     _render_system(raw, item[1])
+
                 elif kind == "clear":
                     raw.delete("1.0", "end")
         finally:
@@ -175,13 +163,11 @@ class ChatBox(ctk.CTkFrame):
 
 
 # ─── module-level render helpers (no self dependency) ─────────────────────────
-
 def _render_sent(raw, sender: str, recipient: str, message: str) -> None:
     ts = _now()
     raw.insert("end", f"  {sender} → {recipient}  ", (_TAG_SENT, _TAG_LABEL))
     raw.insert("end", f"{ts}\n",                      (_TAG_SENT, _TAG_TIME))
     raw.insert("end", f"  {message}\n\n",              _TAG_SENT)
-
 
 def _render_received(raw, sender: str, message: str) -> None:
     ts = _now()
@@ -189,21 +175,19 @@ def _render_received(raw, sender: str, message: str) -> None:
     raw.insert("end", f"{ts}\n",           (_TAG_RECEIVED, _TAG_TIME))
     raw.insert("end", f"  {message}\n\n",  _TAG_RECEIVED)
 
-
 def _render_system(raw, text: str) -> None:
     ts = _now()
     raw.insert("end", f"  ── {ts} ",  (_TAG_SYSTEM, _TAG_TIME))
     raw.insert("end", f"{text}",       _TAG_SYSTEM)
     raw.insert("end", " ──\n\n",      (_TAG_SYSTEM, _TAG_SEP))
 
-
 def _is_at_bottom(raw) -> bool:
     """True when the viewport bottom is within 5 % of the document end."""
     try:
         return raw.yview()[1] >= 0.95
+    
     except Exception:
         return True
-
 
 def _now() -> str:
     return datetime.now().strftime("%H:%M:%S")
