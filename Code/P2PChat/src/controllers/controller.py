@@ -1,12 +1,15 @@
+"""ChatController: thin adapter between P2PNode and the GUI layer."""
 import logging
-from typing import Optional, Callable, Tuple
+from typing import Callable, Optional, Tuple
+
 from network.node import P2PNode
 
 logger = logging.getLogger(__name__)
 
+
 class ChatController:
-    """Thin wrapper around P2PNode that exposes a simple controller
-    interface for the GUI and ensures callback exceptions are contained.
+    """Thin wrapper around P2PNode that exposes a simple controller interface
+    for the GUI and ensures callback exceptions are contained.
     """
 
     def __init__(
@@ -16,14 +19,20 @@ class ChatController:
         on_connected: Callable[[str], None],
         on_disconnect: Callable[[str], None],
         on_peers_update: Callable[[], None],
+        on_peer_discovered: Optional[Callable[[str, dict], None]] = None,
     ) -> None:
         self.on_system = on_system
         self.on_message = on_message
         self.on_connected = on_connected
         self.on_disconnect = on_disconnect
         self.on_peers_update = on_peers_update
+        self.on_peer_discovered = on_peer_discovered
 
         self.node: Optional[P2PNode] = None
+
+    # ------------------------------------------------------------------ #
+    # Node lifecycle                                                       #
+    # ------------------------------------------------------------------ #
 
     def start_node(self, host: str, port: int, username: str) -> Tuple[bool, str]:
         if self.node is not None:
@@ -33,19 +42,29 @@ class ChatController:
             host=host,
             port=port,
             username=username,
-            on_message=self._on_message,
-            on_disconnect=self._on_disconnect,
-            on_connected=self._on_connected,
+            on_message = self._on_message,
+            on_disconnect = self._on_disconnect,
+            on_connected = self._on_connected,
+            on_peer_discovered = self._on_peer_discovered,
         )
 
         try:
             self.node.start_server()
-        except OSError as e:
+        except OSError:
             logger.exception("Failed to start node")
             self.node = None
-            return False, str(e)
+            return False, f"Could not bind to port {port}."
 
         return True, f"Started as '{username}' — listening on port {port}."
+
+    def stop(self) -> None:
+        if self.node is not None:
+            self.node.stop_server()
+            self.node = None
+
+    # ------------------------------------------------------------------ #
+    # Networking actions                                                   #
+    # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, ip: str, port: int) -> bool:
         if self.node is None:
@@ -65,21 +84,19 @@ class ChatController:
             return 0, 0
         return self.node.broadcast_message(payload)
 
-    def stop(self) -> None:
-        if self.node is not None:
-            self.node.stop_server()
-            self.node = None
-
-    def discover_peers(self):
+    def discover_peers(self) -> None:
         if self.node is not None:
             self.node.discover_peers()
 
-    def get_discovered_peers(self):
+    def get_discovered_peers(self) -> dict[str, dict]:
         if self.node is not None:
             return self.node.get_discovered_peers()
         return {}
 
-    # Internal safe callback invocation
+    # ------------------------------------------------------------------ #
+    # Internal safe callback forwarders                                   #
+    # ------------------------------------------------------------------ #
+
     def _safe_fire(self, cb: Callable, *args) -> None:
         try:
             cb(*args)
@@ -90,10 +107,13 @@ class ChatController:
         self._safe_fire(self.on_message, sender, payload)
 
     def _on_connected(self, peer_address: str) -> None:
-        # Forward event to GUI/controller callbacks
         self._safe_fire(self.on_connected, peer_address)
         self._safe_fire(self.on_peers_update)
 
     def _on_disconnect(self, peer_address: str) -> None:
         self._safe_fire(self.on_disconnect, peer_address)
         self._safe_fire(self.on_peers_update)
+
+    def _on_peer_discovered(self, peer_address: str, info: dict) -> None:
+        if self.on_peer_discovered is not None:
+            self._safe_fire(self.on_peer_discovered, peer_address, info)
