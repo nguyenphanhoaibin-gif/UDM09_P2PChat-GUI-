@@ -301,13 +301,18 @@ class P2PNode:
 
                 for peer_address in expired:
 
-                    self.discovered_peers.pop(
-                        peer_address,
-                        None
-                    )
+                    peer = self.discovered_peers.get(peer_address)
+
+                    if peer is None:
+                        continue
+
+                    if peer.get("status") == "offline":
+                        continue
+
+                    peer["status"] = "offline"
 
                     print(
-                        f"[DISCOVERY] Peer expired: "
+                        f"[DISCOVERY] Peer offline: "
                         f"{peer_address}"
                     )
 
@@ -710,11 +715,20 @@ class P2PNode:
 
         with self.discovery_lock:
 
+            now = time.time()
+            existing = self.discovered_peers.get(peer_address)
+
+            if existing is not None:
+                existing["last_seen"] = now
+                existing["status"] = "online"
+                return
+            
             self.discovered_peers[peer_address] = {
                 "username": packet.get("username"),
                 "port": peer_port,
                 "ip": peer_ip,
-                "last_seen": time.time()
+                "status": "online",
+                "last_seen": now
             }
 
         print(
