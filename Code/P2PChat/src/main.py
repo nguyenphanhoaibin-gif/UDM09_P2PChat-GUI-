@@ -1,5 +1,5 @@
 import sys
-from gui.main_window import ChatApp
+from gui.app import ChatApp
 from gui.validation import validate_port
 from config import configure_logging, DEFAULT_LISTEN_PORT
 
