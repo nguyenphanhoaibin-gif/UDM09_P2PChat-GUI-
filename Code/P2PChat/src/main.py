@@ -1,5 +1,5 @@
 import sys
-from gui.app import ChatApp
+from gui.main_window import ChatApp
 from gui.validation import validate_port
 
 DEFAULT_PORT = 12000 # Default port for P2P chat

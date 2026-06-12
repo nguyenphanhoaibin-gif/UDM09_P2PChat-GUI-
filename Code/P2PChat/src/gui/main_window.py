@@ -1,18 +1,19 @@
 import customtkinter as ctk
 import threading
 import time
-from sidebar import Sidebar
-from statusbar import StatusBar
+from gui.sidebar import Sidebar
+from gui.statusbar import StatusBar
 
 # Set up standard dark mode interface
 ctk.set_appearance_mode("dark")
 
 class ChatApp(ctk.CTk):
-    def __init__(self):
+    def __init__(self, listen_port=12000):
         super().__init__()
-        self.title("💬 P2P Chat v2.0")
+        self.title(f"💬 P2P Chat v2.0 (Port: {listen_port})")
         self.geometry("900x650")
         self.minsize(700, 500)
+        self.listen_port = listen_port
 
         # --- Set up Responsive Grid ---
         # Column 0 (Chat) will expand (weight=1), Column 1 (Sidebar) stays fixed (weight=0)
