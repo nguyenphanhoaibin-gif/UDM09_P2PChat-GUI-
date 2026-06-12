@@ -19,7 +19,7 @@ class ChatApp(ctk.CTk):
         # Column 0 (Chat) will expand (weight=1), Column 1 (Sidebar) stays fixed (weight=0)
         self.grid_columnconfigure(0, weight=1)  
         self.grid_columnconfigure(1, weight=0)  
-        self.grid_rowconfigure(0, weight=1)     #_rows will expand
+        self.grid_rowconfigure(0, weight=1)     # main content row expands
         self.grid_rowconfigure(1, weight=0)     # Status bar row stays fixed
 
         self._build_ui()
