@@ -6,7 +6,7 @@ import customtkinter as ctk
 from gui.chatbox import ChatBox
 from gui.validation import validate_ip, validate_port
 from controllers.controller import ChatController
-from Code.P2PChat.src.rsa_utils import configure_logging, DEFAULT_LISTEN_PORT  # ← fixed import
+from config import configure_logging, DEFAULT_LISTEN_PORT  # ← fixed import
 
 configure_logging()
 
