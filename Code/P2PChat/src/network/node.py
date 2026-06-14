@@ -1,3 +1,5 @@
+"""P2PNode: Manages TCP connections, peer state, and the custom message protocol."""
+
 import logging
 import socket
 import threading
@@ -5,8 +7,8 @@ import time
 from cryptography.fernet import Fernet, InvalidToken
 
 from security.crypto import CryptoHandler
-from message.protocol import PacketType, ProtocolHandler
 from security.rsa_utils import RSAUtils
+from message.protocol import PacketType, ProtocolHandler
 from network.discovery import DiscoveryService, PEER_TIMEOUT
 
 logger = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ _AddressMap = dict[int, str] # id(socket) -> address string
 
 
 class P2PNode:
+    """Manages TCP connections, peer state, and the custom message protocol."""
     def __init__(
         self,
         host: str,
@@ -117,7 +120,6 @@ class P2PNode:
 
             try:
                 self.server_socket.close()
-                
             except OSError:
                 pass
 
@@ -385,7 +387,6 @@ class P2PNode:
 
             if session is None:
                 return
-            
             session["public_key"] = raw_key
             is_initiator = session["is_initiator"]
 
@@ -458,8 +459,7 @@ class P2PNode:
 
             if message_id in self.seen_messages:
                 logger.warning("[WARNING] Replay packet dropped")
-                return
-            
+                return   
             self.seen_messages.add(message_id)
 
             if len(self.seen_messages) > 5000:
@@ -608,7 +608,6 @@ class P2PNode:
         try:
             peer_socket.sendall(self.protocol_handler.serialize(handshake))
             return True
-        
         except (BrokenPipeError, OSError) as exc:
             logger.error("[ERROR] Failed to send handshake: %s", exc)
             return False
@@ -619,14 +618,12 @@ class P2PNode:
             session = self.peer_sessions.get(peer_address)
 
             if session is None:
-                return
-            
+                return        
             raw_peer_key = session.get("public_key")
 
         if not raw_peer_key:
             logger.warning("[WARNING] No peer public key for %s — cannot send session key", peer_address)
             return
-
         try:
             peer_pub = RSAUtils.load_public_key(raw_peer_key)
 
@@ -715,36 +712,3 @@ class P2PNode:
             callback(*args)
         except Exception as exc:
             logger.exception("[ERROR] Callback raised: %s", exc)
-
-    # ------------------------------------------------------------------ #
-    # Legacy public aliases (kept for test compatibility) #
-
-    def register_peer(self, peer_address: str, sock: socket.socket, is_initiator: bool) -> bool:
-        return self._register_peer(peer_address, sock, is_initiator)
-
-    def remove_peer(self, peer_socket: socket.socket) -> None:
-        self._remove_peer(peer_socket)
-
-    def get_peer_address(self, peer_socket: socket.socket) -> str | None:
-        return self._get_peer_address(peer_socket)
-
-    def send_handshake(self, peer_socket: socket.socket) -> bool:
-        return self._send_handshake(peer_socket)
-
-    def schedule_handshake_timeout(self, peer_address: str) -> None:
-        self._schedule_handshake_timeout(peer_address)
-
-    def handle_handshake(self, packet: dict, peer_socket: socket.socket) -> None:
-        self._handle_handshake(packet, peer_socket)
-
-    def handle_handshake_ack(self, packet: dict, peer_socket: socket.socket) -> None:
-        self._handle_handshake_ack(packet, peer_socket)
-
-    def handle_session_key(self, packet: dict, peer_socket: socket.socket) -> None:
-        self._handle_session_key(packet, peer_socket)
-
-    def handle_message(self, packet: dict, peer_socket: socket.socket) -> None:
-        self._handle_message(packet, peer_socket)
-
-    def start_receive_thread(self, peer_address: str, sock: socket.socket) -> None:
-        self._start_receive_thread(peer_address, sock)

@@ -35,6 +35,7 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def start_node(self, host: str, port: int, username: str) -> Tuple[bool, str]:
+        """Start the P2PNode server and discovery service. Returns (success, message)."""
         if self.node is not None:
             return False, "Node already started."
 
@@ -58,6 +59,7 @@ class ChatController:
         return True, f"Started as '{username}' — listening on port {port}."
 
     def stop(self) -> None:
+        """Stop the P2PNode server and discovery service."""
         if self.node is not None:
             self.node.stop_server()
             self.node = None
@@ -67,28 +69,33 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, ip: str, port: int) -> bool:
+        """Connect to a peer at the given IP and port. Returns success."""
         if self.node is None:
             self.on_system("Start the node first.")
             return False
         return self.node.connect_to_peer(ip, port)
 
     def send_message(self, payload: str, peer_address: str) -> bool:
+        """Send a message to a specific peer. Returns success."""
         if self.node is None:
             self.on_system("Start the node first.")
             return False
         return self.node.send_message(payload, peer_address)
 
     def broadcast_message(self, payload: str) -> Tuple[int, int]:
+        """Broadcast a message to all connected peers. Returns (success_count, total_peers)."""
         if self.node is None:
             self.on_system("Start the node first.")
             return 0, 0
         return self.node.broadcast_message(payload)
 
     def discover_peers(self) -> None:
+        """Trigger peer discovery. Results will come in via the on_peer_discovered callback."""
         if self.node is not None:
             self.node.discover_peers()
 
     def get_discovered_peers(self) -> dict[str, dict]:
+        """Get the current list of discovered peers. Returns a dict of peer_address -> info."""
         if self.node is not None:
             return self.node.get_discovered_peers()
         return {}

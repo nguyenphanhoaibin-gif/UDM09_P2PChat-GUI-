@@ -13,7 +13,7 @@ def validate_ip(ip: str) -> bool:
         return False
 
     try:
-        addr = ipaddress.IPv4Address(ip)
+        ipaddress.IPv4Address(ip)
         return True
 
     except ValueError:

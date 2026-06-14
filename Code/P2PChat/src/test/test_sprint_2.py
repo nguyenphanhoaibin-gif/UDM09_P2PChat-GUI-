@@ -2,7 +2,6 @@ import io
 import struct
 import sys
 import threading
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -181,8 +180,8 @@ def test_register_peer_atomic() -> None:
     node = P2PNode(host="127.0.0.1", port=19999)
     a, b = _socket.socketpair()
     try:
-        assert node.register_peer("127.0.0.1:9000", a, True) is True
-        assert node.register_peer("127.0.0.1:9000", b, False) is False
+        assert node._register_peer("127.0.0.1:9000", a, True) is True
+        assert node._register_peer("127.0.0.1:9000", b, False) is False
         with node.peers_lock:
             assert node.peers["127.0.0.1:9000"] is a
     finally:
@@ -199,11 +198,11 @@ def test_get_peer_address_o1() -> None:
     node = P2PNode(host="127.0.0.1", port=19996)
     a, b = _socket.socketpair()
     try:
-        node.register_peer("127.0.0.1:9010", a, True)
+        node._register_peer("127.0.0.1:9010", a, True)
         # Must resolve in O(1) — check that _sock_to_addr is populated
-        assert node.get_peer_address(a) == "127.0.0.1:9010"
+        assert node._get_peer_address(a) == "127.0.0.1:9010"
         # Unknown socket returns None
-        assert node.get_peer_address(b) is None
+        assert node._get_peer_address(b) is None
     finally:
         a.close()
         b.close()
@@ -218,7 +217,7 @@ def test_send_message_returns_false_when_not_active() -> None:
     node = P2PNode(host="127.0.0.1", port=19998)
     a, b = _socket.socketpair()
     try:
-        node.register_peer("127.0.0.1:9001", a, True)
+        node._register_peer("127.0.0.1:9001", a, True)
         result = node.send_message("hello", "127.0.0.1:9001")
         assert result is False
     finally:
@@ -247,8 +246,8 @@ def test_handshake_timeout_disconnects_pending_peer() -> None:
     )
     a, b = _socket.socketpair()
     try:
-        node.register_peer("127.0.0.1:9002", a, True)
-        node.schedule_handshake_timeout("127.0.0.1:9002")
+        node._register_peer("127.0.0.1:9002", a, True)
+        node._schedule_handshake_timeout("127.0.0.1:9002")
         assert disconnected.wait(timeout=2.0), "Timeout did not fire"
     finally:
         _core.HANDSHAKE_TIMEOUT = original_timeout
@@ -285,7 +284,7 @@ def test_on_message_receives_sender_and_payload() -> None:
     # Build an active peer session manually
     a, b = _socket.socketpair()
     try:
-        node.register_peer("127.0.0.1:9020", a, False)
+        node._register_peer("127.0.0.1:9020", a, False)
         crypto = CryptoHandler()
         with node.peers_lock:
             session = node.peer_sessions["127.0.0.1:9020"]
@@ -297,7 +296,7 @@ def test_on_message_receives_sender_and_payload() -> None:
         proto = node.protocol_handler
         packet = proto.create_packet(PacketType.MESSAGE, "Alice", "hello", crypto=crypto)
         # Inject via handle_message directly
-        node.handle_message(packet, a)
+        node._handle_message(packet, a)
 
         assert len(received) == 1
         assert received[0] == ("Alice", "hello")
@@ -315,10 +314,10 @@ def test_remove_peer_cleans_reverse_map() -> None:
     node = P2PNode(host="127.0.0.1", port=19988)
     a, b = _socket.socketpair()
     try:
-        node.register_peer("127.0.0.1:9030", a, True)
-        assert node.get_peer_address(a) == "127.0.0.1:9030"
-        node.remove_peer(a)
-        assert node.get_peer_address(a) is None
+        node._register_peer("127.0.0.1:9030", a, True)
+        assert node._get_peer_address(a) == "127.0.0.1:9030"
+        node._remove_peer(a)
+        assert node._get_peer_address(a) is None
         with node.peers_lock:
             assert id(a) not in node._sock_to_addr
     finally:

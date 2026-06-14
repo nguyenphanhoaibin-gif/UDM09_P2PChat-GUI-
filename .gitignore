@@ -25,3 +25,5 @@ dist/
 # PyInstaller
 *.spec
 
+# Git
+.git

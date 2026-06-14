@@ -1,3 +1,5 @@
+"""Main GUI application for the P2P Chat."""
+
 from __future__ import annotations
 
 import threading

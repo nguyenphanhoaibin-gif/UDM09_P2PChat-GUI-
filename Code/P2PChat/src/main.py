@@ -1,3 +1,5 @@
+"""Main entry point for the P2P chat application."""
+
 import sys
 from gui.app import ChatApp
 from gui.validation import validate_port
