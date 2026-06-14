@@ -1,113 +1,438 @@
+"""Main window container for P2PChat Sprint 3."""
+
+from __future__ import annotations
+
 import customtkinter as ctk
-import threading
-import time
+
+from gui.chatbox import ChatBox
 from gui.sidebar import Sidebar
+from gui.contact_panel import ContactPanel
 from gui.statusbar import StatusBar
 
-# Set up standard dark mode interface
-ctk.set_appearance_mode("dark")
+class MainWindow(ctk.CTkFrame):
+    """Main GUI container.
 
-class ChatApp(ctk.CTk):
-    def __init__(self, listen_port=12000):
-        super().__init__()
-        self.title(f"💬 P2P Chat v2.0 (Port: {listen_port})")
-        self.geometry("900x650")
-        self.minsize(700, 500)
-        self.listen_port = listen_port
+    Responsibilities:
+    - Layout management
+    - Chat rendering
+    - Discovery rendering
+    - Contact rendering
+    - Status rendering
 
-        # --- Set up Responsive Grid ---
-        # Column 0 (Chat) will expand (weight=1), Column 1 (Sidebar) stays fixed (weight=0)
-        self.grid_columnconfigure(0, weight=1)  
-        self.grid_columnconfigure(1, weight=0)  
-        self.grid_rowconfigure(0, weight=1)     # main content row expands
-        self.grid_rowconfigure(1, weight=0)     # Status bar row stays fixed
+    No networking logic.
+    """
 
-        self._build_ui()
+    def __init__(
+        self,
+        master,
+        on_peer_select=None,
+        on_peer_connect=None,
+        on_contact_select=None
+    ):
+        super().__init__(master)
 
-    def _build_ui(self):
-        # ================= LEFT AREA (MAIN CHAT) =================
-        self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#1e1e2e")
-        self.main_frame.grid(row=0, column=0, sticky="nsew")
-        self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(1, weight=1) # Chat box expands automatically
-
-        # 1. Connection bar (UX Non-tech: Hides IP/Port)
-        self.top_bar = ctk.CTkFrame(self.main_frame, height=50, fg_color="transparent")
-        self.top_bar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 0))
-
-        self.nick_entry = ctk.CTkEntry(self.top_bar, placeholder_text="Enter nickname...", width=150, font=("Consolas", 12))
-        self.nick_entry.pack(side="left", padx=(0, 10))
-
-        self.connect_btn = ctk.CTkButton(
-            self.top_bar, text="🔗 Start Chat", 
-            font=("Consolas", 12, "bold"), fg_color="#89b4fa", text_color="#11111b",
-            command=self._start_connect_thread # Call the function to start connection in a new thread
+        self.grid(
+            row=0,
+            column=0,
+            sticky="nsew"
         )
-        self.connect_btn.pack(side="left")
 
-        # 2. Chat box (Disabled until conected)
-        self.chat_box = ctk.CTkTextbox(
-            self.main_frame, state="disabled", wrap="word", 
-            font=("Consolas", 13), fg_color="#181825", text_color="#cdd6f4"
+        self.grid_rowconfigure(
+            0,
+            weight=1
         )
-        self.chat_box.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
 
-        # 3. Message input area (Disabled by default)
-        self.input_frame = ctk.CTkFrame(self.main_frame, height=50, fg_color="transparent")
-        self.input_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 10))
-
-        self.msg_entry = ctk.CTkEntry(self.input_frame, placeholder_text="Enter message...", state="disabled", font=("Consolas", 13))
-        self.msg_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        self.send_btn = ctk.CTkButton(
-            self.input_frame, text="▶ Send", width=80, state="disabled",
-            font=("Consolas", 12, "bold"), fg_color="#a6e3a1", text_color="#11111b"
+        self.grid_columnconfigure(
+            0,
+            weight=3
         )
-        self.send_btn.pack(side="left")
 
-        # ================= LEFT AREA (SIDEBAR) =================
-        self.sidebar = Sidebar(self)
-        self.sidebar.grid(row=0, column=1, sticky="ns")
-
-        # ================= BOTTOM AREA (STATUS BAR) =================
-        self.status_bar = StatusBar(self)
-        self.status_bar.grid(row=1, column=0, columnspan=2, sticky="ew")
-
-    # ================= Logic (preventing GUI freeze)=================
-    def _start_connect_thread(self):
-        """Start a separate network thread to avoid freezing the interface."""
-        # Lock the button to prevent multiple clicks.
-        self.connect_btn.configure(state="disabled")
-        self.status_bar.set_status("⏳ Setting up P2P network...", "#f9e2af")
-        
-        # Move the network waiting process to a different thread.
-        threading.Thread(target=self._network_connect_task, daemon=True).start()
-
-    def _network_connect_task(self):
-        """Simulating socket handling functions (Running in the background)"""
-        # TODO: Place the actual socket.bind() or socket.connect() code here.
-        time.sleep(1.5) # Simulate 1.5s delay to open port
-        
-        # After the network is ready, request the main thread to update the UI
-        self.after(0, self._on_connected)
-
-    def _on_connected(self):
-        """Update UI after the network is ready"""
-        self.status_bar.set_status("✅ Ready to send and receive messages", "#a6e3a1")
-        
-        # Change the connect button to a disconnect button
-        self.connect_btn.configure(
-            text="✂️ Disconnect", state="normal", 
-            fg_color="#f38ba8", hover_color="#d76f8c"
+        self.grid_columnconfigure(
+            1,
+            weight=1
         )
-        
-        # Unlock message input field (clear UX)
-        self.msg_entry.configure(state="normal")
-        self.send_btn.configure(state="normal")
 
-        # Simulate loading a list of peers to display in the sidebar.
-        self.sidebar.update_peers(["James", "Alice"])
+        self._build_chat_area()
 
-if __name__ == "__main__":
-    app = ChatApp()
-    app.mainloop()
+        self._build_sidebar(
+            on_peer_select,
+            on_peer_connect,
+            on_contact_select
+        )
+
+    # ==================================================
+    # BUILD UI
+    # ==================================================
+
+    def _build_chat_area(self):
+
+        self.chat_frame = ctk.CTkFrame(
+            self
+        )
+
+        self.chat_frame.grid(
+            row=0,
+            column=0,
+            sticky="nsew",
+            padx=(10, 5),
+            pady=10
+        )
+
+        self.chat_frame.grid_rowconfigure(
+            1,
+            weight=1
+        )
+
+        self.chat_frame.grid_columnconfigure(
+            0,
+            weight=1
+        )
+
+        # Header
+
+        self.chat_header = ctk.CTkFrame(
+            self.chat_frame,
+            height=50
+        )
+
+        self.chat_header.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(10, 5)
+        )
+
+        self.chat_header.grid_columnconfigure(
+            0,
+            weight=1
+        )
+
+        self.chat_target_label = ctk.CTkLabel(
+            self.chat_header,
+            text="No peer selected",
+            font=("Arial", 14, "bold"),
+            anchor="w"
+        )
+
+        self.chat_target_label.grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=10
+        )
+
+        # Chat
+
+        self.chat_box = ChatBox(
+            self.chat_frame
+        )
+
+        self.chat_box.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            padx=10,
+            pady=5
+        )
+
+        # Input
+
+        self.input_frame = ctk.CTkFrame(
+            self.chat_frame
+        )
+
+        self.input_frame.grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            padx=10,
+            pady=(5, 10)
+        )
+
+        self.input_frame.grid_columnconfigure(
+            0,
+            weight=1
+        )
+
+        self.message_entry = ctk.CTkEntry(
+            self.input_frame,
+            placeholder_text="Enter message..."
+        )
+
+        self.message_entry.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(10, 5),
+            pady=10
+        )
+
+        self.send_button = ctk.CTkButton(
+            self.input_frame,
+            text="Send",
+            width=100
+        )
+
+        self.send_button.grid(
+            row=0,
+            column=1,
+            padx=(0, 5),
+            pady=10
+        )
+
+        self.broadcast_button = ctk.CTkButton(
+            self.input_frame,
+            text="Broadcast",
+            width=100
+        )
+
+        self.broadcast_button.grid(
+            row=0,
+            column=2,
+            padx=(0, 10),
+            pady=10
+        )
+
+    def _build_sidebar(
+        self,
+        on_peer_select,
+        on_peer_connect,
+        on_contact_select
+    ):
+
+        self.right_panel = ctk.CTkFrame(
+            self,
+            width=320
+        )
+
+        self.right_panel.grid(
+            row=0,
+            column=1,
+            sticky="nsew",
+            padx=(5, 10),
+            pady=10
+        )
+
+        self.right_panel.grid_rowconfigure(
+            1,
+            weight=1
+        )
+
+        self.right_panel.grid_rowconfigure(
+            2,
+            weight=1
+        )
+
+        self.sidebar = Sidebar(
+            self.right_panel,
+            on_peer_select=on_peer_select,
+            on_peer_connect=on_peer_connect
+        )
+
+        self.sidebar.grid(
+            row=0,
+            column=0,
+            sticky="nsew"
+        )
+
+        self.contact_panel = ContactPanel(
+            self.right_panel,
+            on_contact_select=on_contact_select
+        )
+
+        self.contact_panel.grid(
+            row=1,
+            column=0,
+            sticky="nsew"
+        )
+
+        self.status_bar = StatusBar(
+            self.right_panel
+        )
+
+        self.status_bar.grid(
+            row=2,
+            column=0,
+            sticky="ew"
+        )
+
+    # ==================================================
+    # CALLBACKS
+    # ==================================================
+
+    def set_send_callback(
+        self,
+        callback
+    ):
+
+        self.send_button.configure(
+            command=callback
+        )
+
+        self.message_entry.bind(
+            "<Return>",
+            lambda _e: callback()
+        )
+
+    def set_broadcast_callback(
+        self,
+        callback
+    ):
+
+        self.broadcast_button.configure(
+            command=callback
+        )
+
+    # ==================================================
+    # CHAT API
+    # ==================================================
+
+    def add_system_message(
+        self,
+        message: str
+    ):
+
+        self.chat_box.add_system(
+            message
+        )
+
+    def add_received_message(
+        self,
+        sender: str,
+        message: str
+    ):
+
+        self.chat_box.add_received(
+            sender,
+            message
+        )
+
+    def add_sent_message(
+        self,
+        sender: str,
+        recipient: str,
+        message: str
+    ):
+
+        self.chat_box.add_sent(
+            sender,
+            recipient,
+            message
+        )
+
+    def clear_chat(self):
+
+        self.chat_box.clear()
+
+    # ==================================================
+    # DISCOVERY API
+    # ==================================================
+
+    def update_discovered_peers(
+        self,
+        peers: dict
+    ):
+
+        self.sidebar.update_peers(
+            peers
+        )
+
+    # ==================================================
+    # CONTACT API
+    # ==================================================
+
+    def update_contacts(
+        self,
+        contacts: list
+    ):
+
+        if hasattr(
+            self.contact_panel,
+            "load_contacts"
+        ):
+            self.contact_panel.load_contacts(
+                contacts
+            )
+
+    # ==================================================
+    # STATUS API
+    # ==================================================
+
+    def set_status(
+        self,
+        text: str,
+        color: str = "#a6adc8"
+    ):
+
+        if hasattr(
+            self.status_bar,
+            "set_status"
+        ):
+            self.status_bar.set_status(
+                text,
+                color
+            )
+
+    # ==================================================
+    # HEADER API
+    # ==================================================
+
+    def set_active_chat(
+        self,
+        username: str
+    ):
+
+        self.chat_target_label.configure(
+            text=username
+        )
+
+    # ==================================================
+    # INPUT API
+    # ==================================================
+
+    def get_message_text(
+        self
+    ) -> str:
+
+        return self.message_entry.get()
+
+    def clear_message_text(
+        self
+    ):
+
+        self.message_entry.delete(
+            0,
+            "end"
+        )
+
+    def focus_message_box(
+        self
+    ):
+
+        self.message_entry.focus_set()
+
+    def enable_input(
+        self
+    ):
+
+        self.message_entry.configure(
+            state="normal"
+        )
+
+        self.send_button.configure(
+            state="normal"
+        )
+
+    def disable_input(
+        self
+    ):
+
+        self.message_entry.configure(
+            state="disabled"
+        )
+
+        self.send_button.configure(
+            state="disabled"
+        )

@@ -1,3 +1,5 @@
+"""RSA utilities for key generation, serialization, and encryption/decryption in P2PChat."""
+
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
@@ -47,7 +49,6 @@ class RSAUtils:
     @staticmethod
     def decrypt(private_key, encrypted_data: bytes) -> bytes:
         """Decrypt *encrypted_data* with *private_key* using OAEP/SHA-256."""
-        
         return private_key.decrypt(
             encrypted_data,
             padding.OAEP(
@@ -55,4 +56,24 @@ class RSAUtils:
                 algorithm=hashes.SHA256(),
                 label=None,
             ),
+        )
+
+    @staticmethod
+    def serialize_private_key(
+        private_key
+    ) -> str:
+        """Serialize *private_key* to a PEM-encoded string."""
+        return private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ).decode()
+
+    @staticmethod
+    def load_private_key(private_key_string: str):
+        """Deserialize a PEM-encoded private key string."""
+
+        return serialization.load_pem_private_key(
+            private_key_string.encode(),
+            password=None
         )

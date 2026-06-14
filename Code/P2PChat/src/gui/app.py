@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 import customtkinter as ctk
 
-from gui.chatbox import ChatBox
+from gui.main_window import MainWindow
 from gui.validation import validate_ip, validate_port
 from controllers.controller import ChatController
 from config import configure_logging, DEFAULT_LISTEN_PORT  # ← fixed import
@@ -32,7 +32,17 @@ class ChatApp(ctk.CTk):
         self._listen_port = listen_port
 
         self._setup_window()
-        self._setup_layout()
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        self.main_window = MainWindow(
+            self,
+            on_peer_select=self._handle_peer_selected,
+            on_peer_connect=self._handle_peer_connect
+        )
+        self.main_window.set_send_callback(self._send_message)
+        self.main_window.set_broadcast_callback(self._broadcast_message)
+        
         self.protocol("WM_DELETE_WINDOW", self._handle_close)
 
     # ------------------------------------------------------------------ #
@@ -41,36 +51,6 @@ class ChatApp(ctk.CTk):
         self.title("UDM_09 · P2P Chat")
         self.geometry("1100x640")
         self.minsize(900, 520)
-
-    def _setup_layout(self) -> None:
-        self.grid_columnconfigure(0, weight=3)
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
-
-        self._create_chat_section()
-        self._create_sidebar()
-
-    def _create_chat_section(self) -> None:
-        self.chat_frame = ctk.CTkFrame(self)
-        self.chat_frame.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="nsew")
-        self.chat_frame.grid_rowconfigure(0, weight=1)
-        self.chat_frame.grid_columnconfigure(0, weight=1)
-
-        self.chat_box = ChatBox(self.chat_frame, corner_radius=10)
-        self.chat_box.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="nsew")
-
-        self.message_entry = ctk.CTkEntry(
-            self.chat_frame, placeholder_text="Enter message…"
-        )
-        self.message_entry.grid(row=1, column=0, padx=10, pady=(5, 10), sticky="ew")
-        self.message_entry.bind("<Return>", self._handle_enter)
-
-        self.broadcast_button = ctk.CTkButton(
-            self.chat_frame, text="📡 Broadcast", command=self._broadcast_message
-        )
-        self.broadcast_button.grid(row=1, column=1, padx=(5, 10), pady=(5, 10), sticky="ew")
-
-    def _create_sidebar(self) -> None:
         self.sidebar_frame = ctk.CTkFrame(self)
         self.sidebar_frame.grid(row=0, column=1, padx=(5, 10), pady=10, sticky="nsew")
 
@@ -241,7 +221,8 @@ class ChatApp(ctk.CTk):
             self._add_system("Start the node first.")
             return
 
-        message = self.message_entry.get().strip()
+        message = self.main_window.get_message_text().strip()
+        
         if not message:
             return
 
@@ -258,8 +239,8 @@ class ChatApp(ctk.CTk):
 
         if self.controller.send_message(message, selected):
             me = self.username_entry.get().strip() or "me"
-            self.chat_box.add_sent(me, selected, message)
-            self.message_entry.delete(0, "end")
+            self.main_window.add_sent_message(me, selected, message)
+            self.main_window.clear_message_text()
         else:
             self._add_system(f"Failed to send — {selected} may have disconnected.")
 
@@ -268,7 +249,7 @@ class ChatApp(ctk.CTk):
             self._add_system("Start the node first.")
             return
 
-        message = self.message_entry.get().strip()
+        message = self.main_window.get_message_text().strip()
         if not message:
             return
 
@@ -283,8 +264,8 @@ class ChatApp(ctk.CTk):
 
         if sent > 0:
             me = self.username_entry.get().strip() or "me"
-            self.chat_box.add_sent(me, "everyone", message)
-            self.message_entry.delete(0, "end")
+            self.main_window.add_sent_message(me, "everyone", message)
+            self.main_window.clear_message_text()
 
         if failed > 0:
             self._add_system(f"Broadcast failed for {failed} peer(s).")
@@ -306,7 +287,7 @@ class ChatApp(ctk.CTk):
         self._add_system("Scanning LAN for peers…")
         self.controller.discover_peers()
         # Give peers 1.5 s to respond, then refresh the panel.
-        self.after(1500, self._refresh_discovery_panel)
+        self.after(1500, lambda: self.main_window.update_discovered_peers(self.discovered_peers))
 
     def _refresh_discovery_panel(self) -> None:
         """Repaint the LAN-peers listbox from the current snapshot."""
@@ -424,10 +405,10 @@ class ChatApp(ctk.CTk):
     # System messages and callbacks #
     def _add_system(self, message: str) -> None:
         """Display a system message. Thread-safe via ChatBox queue."""
-        self.chat_box.add_system(message)
+        self.main_window.add_system_message(message)
 
     def _handle_peer_message(self, sender: str, payload: str) -> None:
-        self.chat_box.add_received(sender, payload)
+        self.main_window.add_received_message(sender, payload)
 
     def _handle_connected(self, peer_address: str) -> None:
         def _update() -> None:
@@ -466,12 +447,12 @@ class ChatApp(ctk.CTk):
         def _update() -> None:
             with self._disc_lock:
                 self.discovered_peers[peer_address] = info
-            self._refresh_discovery_panel()
+            self.main_window.update_discovered_peers(self.discovered_peers)
             status = info.get("status", "online")
             uname  = info.get("username", "?")
             if status == "online":
                 self._add_system(
-                    f"LAN peer discovered: {uname} @ {peer_address}"
+                    f"LAN peer discovered: {uname}"
                 )
             else:
                 self._add_system(
@@ -484,3 +465,18 @@ class ChatApp(ctk.CTk):
         if self.controller is not None:
             self.controller.stop()
         self.destroy()
+        
+    def _handle_peer_selected(self, peer_id, peer_info):
+        self._add_system(
+            f"Selected peer: "
+            f"{peer_info.get('username')}"
+        )
+        
+    def _handle_peer_connect(self, peer_id, peer_info):
+        if self.controller is None:
+            return
+        ip = peer_info.get("ip")
+        port = peer_info.get("port")
+        if not ip or not port:
+            return
+        self.controller.connect_to_peer(ip, int(port))

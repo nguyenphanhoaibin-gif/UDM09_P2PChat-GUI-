@@ -27,3 +27,6 @@ dist/
 
 # Git
 .git
+
+# Data
+data/

@@ -1,3 +1,5 @@
+"""UDP broadcast-based peer discovery service for P2PChat."""
+
 import json
 import logging
 import socket
@@ -17,11 +19,14 @@ DISCOVERY_RESPONSE = "discovery_response"
 
 class DiscoveryService:
     """UDP broadcast-based peer discovery service."""
-    def __init__(self, username: str, listen_port: int) -> None:
-        self.username     = username
-        self.listen_port  = listen_port
+    def __init__(self, username: str, listen_port: int, peer_id: str, fingerprint: str) -> None:
+        self.username = username
+        self.listen_port = listen_port
+        self.peer_id = peer_id
+        self.fingerprint = fingerprint
         # Unique ID that lets us discard our own broadcast echoes.
         self.instance_id  = f"{username}-{listen_port}"
+        self.nearby_peers = {}
 
         self.running: bool = False
         self._socket: Optional[socket.socket] = None
@@ -95,10 +100,14 @@ class DiscoveryService:
             sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
             packet = {
-                "type":        DISCOVERY,
+                "type": DISCOVERY,
                 "instance_id": self.instance_id,
-                "username":    self.username,
-                "port":        self.listen_port,
+                "peer_id": self.peer_id,
+                "username": self.username,
+                "fingerprint": self.fingerprint,
+                "port": self.listen_port,
+                "status": "online",
+                "timestamp": time.time()
             }
 
             sender.sendto(
@@ -174,6 +183,7 @@ class DiscoveryService:
             self._send_response(address)
 
         elif packet_type == DISCOVERY_RESPONSE:
+            self.update_peer_registry(packet, address)
 
             if self.on_peer_found is not None:
                 try:
@@ -189,9 +199,13 @@ class DiscoveryService:
             return
 
         response = {
-            "type":     DISCOVERY_RESPONSE,
+            "type": DISCOVERY_RESPONSE,
+            "peer_id": self.peer_id,
             "username": self.username,
-            "port":     self.listen_port,
+            "fingerprint": self.fingerprint,
+            "port": self.listen_port,
+            "status": "online",
+            "timestamp": time.time()
         }
 
         try:
@@ -199,3 +213,42 @@ class DiscoveryService:
 
         except OSError as exc:
             logger.debug("[DISCOVERY] send_response error: %s", exc)
+            
+    def update_peer_registry(
+        self,
+        packet: dict,
+        address: tuple[str, int]
+    ):
+        """Update nearby peer registry."""
+        peer_id = packet.get("peer_id")
+
+        if not peer_id:
+            return
+
+        self.nearby_peers[
+            peer_id
+        ] = {
+            "peer_id": peer_id,
+            "username": packet.get("username"),
+            "fingerprint": packet.get("fingerprint"),
+            "ip": address[0],
+            "tcp_port": packet.get("port"),
+            "status": packet.get("status", "online"),
+            "last_seen": time.time()
+        }
+
+    def get_nearby_peers(self) -> dict:
+        """Return discovered peers."""
+        return dict(self.nearby_peers)
+  
+    def cleanup_expired_peers(self):
+        """Remove expired peers."""
+        now = time.time()
+        expired = []
+
+        for peer_id, peer in (self.nearby_peers.items()):           
+            if now - peer["last_seen"] > PEER_TIMEOUT:
+                expired.append(peer_id)
+
+        for peer_id in expired:
+            del self.nearby_peers[peer_id]

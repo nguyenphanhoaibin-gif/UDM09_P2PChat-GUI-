@@ -29,6 +29,8 @@ class ChatController:
         self.on_peer_discovered = on_peer_discovered
 
         self.node: Optional[P2PNode] = None
+        
+        self.contact_book = None
 
     # ------------------------------------------------------------------ #
     # Node lifecycle                                                       #
@@ -65,7 +67,7 @@ class ChatController:
             self.node = None
 
     # ------------------------------------------------------------------ #
-    # Networking actions                                                   #
+    # Networking actions                                                   
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, ip: str, port: int) -> bool:
@@ -95,10 +97,53 @@ class ChatController:
             self.node.discover_peers()
 
     def get_discovered_peers(self) -> dict[str, dict]:
-        """Get the current list of discovered peers. Returns a dict of peer_address -> info."""
+        """Get discovered peers.
+        Returns:
+        {
+            peer_id: info
+        }
+        """
         if self.node is not None:
             return self.node.get_discovered_peers()
         return {}
+    
+    def get_local_peer_id(self) -> str:
+        """Return local peer id."""
+        if self.node is None:
+            return ""
+        return self.node.identity_manager.get_peer_id()
+
+    def get_local_fingerprint(self) -> str:
+        """Return local fingerprint."""
+        if self.node is None:
+            return ""
+        return self.node.identity_manager.get_fingerprint()
+    
+    def get_peer_info(self, peer_id: str):
+        """Return one peer."""
+        peers = self.get_discovered_peers()
+        return peers.get(peer_id)
+      
+    def get_trust_state(self, peer_id: str) -> str:
+        """Get trust state for a peer."""
+        if self.node is None:
+            return "NEW"
+
+        return self.node.get_trust_state(peer_id)
+
+    def trust_peer(self, peer_id: str) -> None:
+        """Trust peer."""
+        if self.node is None:
+            return
+        
+        self.node.trust_peer(peer_id)
+
+    def block_peer(self, peer_id: str) -> None:
+        """Block peer."""
+        if self.node is None:
+            return
+                     
+        self.node.block_peer(peer_id)
 
     # ------------------------------------------------------------------ #
     # Internal safe callback forwarders                                   #
