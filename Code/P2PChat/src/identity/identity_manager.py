@@ -5,9 +5,9 @@ import json
 
 from security.rsa_utils import RSAUtils
 
-from identity.peer_id import ( generate_peer_id)
+from identity.peer_id import generate_peer_id
 
-from identity.fingerprint import ( generate_fingerprint )
+from identity.fingerprint import generate_fingerprint
 
 
 class IdentityManager:
