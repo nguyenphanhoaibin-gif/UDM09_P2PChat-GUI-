@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
-
 TRUST_COLORS = {
     "NEW": "#f9e2af",
     "TRUSTED": "#89b4fa",
@@ -13,10 +12,8 @@ TRUST_COLORS = {
     "BLOCKED": "#6c7086"
 }
 
-
 class PeerCard(ctk.CTkFrame):
     """Visual representation of a discovered peer."""
-
     def __init__(
         self,
         master,

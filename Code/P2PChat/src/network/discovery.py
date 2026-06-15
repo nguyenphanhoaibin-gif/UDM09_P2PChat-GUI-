@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Callable, Optional
 
+from security.jwt_handler import JWTHandler
+
 logger = logging.getLogger(__name__)
 
 DISCOVERY_PORT    = 15000
@@ -19,11 +21,21 @@ DISCOVERY_RESPONSE = "discovery_response"
 
 class DiscoveryService:
     """UDP broadcast-based peer discovery service."""
-    def __init__(self, username: str, listen_port: int, peer_id: str, fingerprint: str) -> None:
+    def __init__(
+        self, 
+        username: str, 
+        listen_port: int, 
+        peer_id: str, 
+        fingerprint: str,
+        public_key_pem: str, 
+        private_key_pem: str
+        ):
         self.username = username
         self.listen_port = listen_port
         self.peer_id = peer_id
         self.fingerprint = fingerprint
+        self.public_key_pem = public_key_pem
+        self.private_key_pem = private_key_pem
         # Unique ID that lets us discard our own broadcast echoes.
         self.instance_id  = f"{username}-{listen_port}"
         self.nearby_peers = {}
@@ -94,7 +106,14 @@ class DiscoveryService:
     def discover(self) -> None:
         """Send a single broadcast discovery packet on the LAN."""
         sender: Optional[socket.socket] = None
-
+        identity_token = (
+            JWTHandler.create_identity_token(
+                peer_id=self.peer_id,
+                username=self.username,
+                fingerprint=self.fingerprint,
+                private_key_pem=self.private_key_pem
+            )
+        )
         try:
             sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sender.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -105,6 +124,8 @@ class DiscoveryService:
                 "peer_id": self.peer_id,
                 "username": self.username,
                 "fingerprint": self.fingerprint,
+                "public_key": self.public_key_pem,
+                "identity_token": identity_token,
                 "port": self.listen_port,
                 "status": "online",
                 "timestamp": time.time()
@@ -128,7 +149,6 @@ class DiscoveryService:
 
     # ------------------------------------------------------------------ #
     # Internal threads #
-
 
     def _listen_loop(self) -> None:
         """Receive UDP packets and dispatch to _handle_packet."""
@@ -194,6 +214,15 @@ class DiscoveryService:
 
     def _send_response(self, address: tuple[str, int]) -> None:
         """Reply to a discovery broadcast with our own info."""
+        identity_token = (
+            JWTHandler.create_identity_token(
+                peer_id=self.peer_id,
+                username=self.username,
+                fingerprint=self.fingerprint,
+                private_key_pem=self.private_key_pem
+            )
+        )
+        
         sock = self._socket
         if sock is None:
             return
@@ -203,6 +232,8 @@ class DiscoveryService:
             "peer_id": self.peer_id,
             "username": self.username,
             "fingerprint": self.fingerprint,
+            "public_key": self.public_key_pem,
+            "identity_token": identity_token,
             "port": self.listen_port,
             "status": "online",
             "timestamp": time.time()

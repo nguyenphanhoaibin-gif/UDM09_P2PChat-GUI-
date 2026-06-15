@@ -3,3 +3,6 @@ customtkinter
 
 # Encryption
 cryptography
+
+#JWT
+PyJWT

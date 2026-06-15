@@ -12,7 +12,7 @@ from message.protocol import PacketType, ProtocolHandler
 from network.discovery import DiscoveryService, PEER_TIMEOUT
 from identity.identity_manager import IdentityManager
 from trust.tofu_engine import TOFUEngine
-
+from security.jwt_handler import JWTHandler
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,9 @@ class P2PNode:
             username=self.username,
             listen_port=self.port,
             peer_id=self.identity_manager.get_peer_id(),
-            fingerprint=self.identity_manager.get_fingerprint()
+            fingerprint=self.identity_manager.get_fingerprint(),
+            public_key_pem=self.identity_manager.public_key_pem,
+            private_key_pem=self.identity_manager.private_key_pem
         )
         self.discovery.on_peer_found = self._handle_discovered_peer
 
@@ -503,7 +505,53 @@ class P2PNode:
     def _handle_discovered_peer(self, packet: dict, address: tuple[str, int]) -> None:
         """Called by DiscoveryService when a discovery_response is received."""
         peer_ip = address[0]
-        peer_id = packet.get("peer_id")        
+        peer_id = packet.get("peer_id")     
+        token = packet.get("identity_token")
+        public_key = packet.get("public_key")
+
+        if not token or not public_key:
+            logger.warning(
+                "[DISCOVERY] Missing JWT identity"
+            )
+            return
+        
+        claims = (
+            JWTHandler.verify_identity_token(
+                token,
+                public_key
+            )
+        )
+
+        if claims is None:
+            logger.warning(
+                "[DISCOVERY] Invalid JWT"
+            )
+            return
+        
+        jwt_fingerprint = claims.get(
+            "fingerprint"
+        )
+
+        packet_fingerprint = packet.get(
+            "fingerprint"
+        )
+
+        if jwt_fingerprint != packet_fingerprint:
+            logger.warning(
+                "[DISCOVERY] Fingerprint mismatch"
+            )
+            return
+        
+        jwt_peer_id = claims.get(
+            "peer_id"
+        )
+
+        if jwt_peer_id != peer_id:
+            logger.warning(
+                "[DISCOVERY] Peer ID mismatch"
+            )
+            return
+        
         if not peer_id:
             return
         trust_state = (

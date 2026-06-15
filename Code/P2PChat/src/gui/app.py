@@ -9,6 +9,7 @@ from gui.main_window import MainWindow
 from gui.validation import validate_ip, validate_port
 from controllers.controller import ChatController
 from config import configure_logging, DEFAULT_LISTEN_PORT  # ← fixed import
+from gui.ui_state import UIState
 
 configure_logging()
 
@@ -29,6 +30,7 @@ class ChatApp(ctk.CTk):
         self.discovered_peers: dict[str, dict] = {}
 
         self.controller: ChatController | None = None
+        self.ui_state = UIState()
         self._listen_port = listen_port
 
         self._setup_window()
@@ -184,9 +186,20 @@ class ChatApp(ctk.CTk):
             return
 
         self.start_button.configure(state="disabled")
+        self.main_window.disable_input()
+        self.main_window.set_status(
+            "Ready - Waiting for connections",
+            "#89b4fa"
+        )
         self.username_entry.configure(state="disabled")
         self.listen_port_entry.configure(state="disabled")
         self._add_system(msg)
+        self.main_window.set_active_chat(
+            username="No peer selected",
+            status="offline",
+            trust_state="NEW"
+        )
+        self.main_window.disable_input()
 
     # ------------------------------------------------------------------ #
     # Messaging actions #
@@ -282,12 +295,24 @@ class ChatApp(ctk.CTk):
 
     def _discover_peers(self) -> None:
         if self.controller is None:
-            self._add_system("Start the node first.")
+            self._add_system(
+                "Start the node first."
+            )
             return
-        self._add_system("Scanning LAN for peers…")
+        self.main_window.set_status(
+            "🔍 Discovering peers...",
+            "#89b4fa"
+        )
+        self._add_system(
+            "Scanning LAN for peers…"
+        )
         self.controller.discover_peers()
-        # Give peers 1.5 s to respond, then refresh the panel.
-        self.after(1500, lambda: self.main_window.update_discovered_peers(self.discovered_peers))
+        self.after(
+            1500,
+            lambda: self.main_window.update_discovered_peers(
+                self.discovered_peers
+            )
+        )
 
     def _refresh_discovery_panel(self) -> None:
         """Repaint the LAN-peers listbox from the current snapshot."""
@@ -415,49 +440,88 @@ class ChatApp(ctk.CTk):
             with self._peers_lock:
                 if peer_address not in self.connected_peers:
                     self.connected_peers.append(peer_address)
+
             self._repaint_peer_list()
+            self.main_window.set_status(
+                f"Connected: {peer_address}",
+                "#a6e3a1"
+            )
+
+            if self.selected_peer == peer_address:
+                self.main_window.enable_input()
+
             self._add_system(f"Peer connected and ready: {peer_address}")
-            # Mark the discovered entry as connected.
+            
             with self._disc_lock:
                 if peer_address in self.discovered_peers:
                     self.discovered_peers[peer_address]["connected"] = True
-            self._refresh_discovery_panel()
+                    self.discovered_peers[peer_address]["status"] = "connected"
 
+            self.main_window.update_discovered_peers(self.discovered_peers)
+            self._refresh_discovery_panel()
+            
         self.after(0, _update)
 
-    def _handle_disconnect(self, peer_address: str) -> None:
+    def _handle_disconnect(self,peer_address: str) -> None:
         def _update() -> None:
             with self._peers_lock:
                 if peer_address in self.connected_peers:
                     self.connected_peers.remove(peer_address)
+
                 if self.selected_peer == peer_address:
                     self.selected_peer = None
+                    self.main_window.set_active_chat(
+                        username="No peer selected",
+                        status="offline",
+                        trust_state="NEW"
+                    )
+                    self.main_window.disable_input()
+
             self._repaint_peer_list()
+            self.main_window.set_status(
+                f"Disconnected: {peer_address}",
+                "#f38ba8"
+            )
+
             self._add_system(f"Connection lost: {peer_address}")
-            # Mark the discovered entry as disconnected.
+
             with self._disc_lock:
                 if peer_address in self.discovered_peers:
                     self.discovered_peers[peer_address]["connected"] = False
+                    self.discovered_peers[peer_address]["status"] = "online"
+
+            self.main_window.update_discovered_peers(
+                self.discovered_peers
+            )
             self._refresh_discovery_panel()
 
         self.after(0, _update)
 
     def _handle_peer_discovered(self, peer_address: str, info: dict) -> None:
-        """Called from the networking thread when a LAN peer is found/updated."""
+        """
+        Called from networking thread when a peer is discovered or updated.
+        """
         def _update() -> None:
             with self._disc_lock:
                 self.discovered_peers[peer_address] = info
+                
             self.main_window.update_discovered_peers(self.discovered_peers)
+            username = info.get("username", peer_address)
             status = info.get("status", "online")
-            uname  = info.get("username", "?")
-            if status == "online":
-                self._add_system(
-                    f"LAN peer discovered: {uname}"
+            # Refresh header if selected peer changed
+            if self.selected_peer == peer_address:
+                self.main_window.set_active_chat(
+                    username=username,
+                    status=status,
+                    trust_state=info.get(
+                        "trust_state",
+                        "NEW"
+                    )
                 )
-            else:
-                self._add_system(
-                    f"LAN peer went offline: {uname} @ {peer_address}"
-                )
+
+            self.main_window.set_status(
+                f"Discovery: {len(self.discovered_peers)} peer(s)"
+            )
 
         self.after(0, _update)
 
@@ -467,11 +531,59 @@ class ChatApp(ctk.CTk):
         self.destroy()
         
     def _handle_peer_selected(self, peer_id, peer_info):
-        self._add_system(
-            f"Selected peer: "
-            f"{peer_info.get('username')}"
+        """
+        Called when a peer is selected from Sidebar.
+        Updates chat header, status bar and loads history.
+        """
+        self.selected_peer = peer_id
+        self.main_window.clear_chat()
+        username = peer_info.get("username", peer_id)
+        status = peer_info.get("status", "online")
+        trust_state = peer_info.get("trust_state", "NEW")
+        self.main_window.set_active_chat(
+            username=username,
+            status=status,
+            trust_state=trust_state
         )
-        
+        self.main_window.enable_input()
+        self.main_window.focus_message_box()
+        self.main_window.set_status(
+            f"Selected peer: {username}"
+        )
+        self._add_system(
+            f"Selected peer: {username}"
+        )
+        """ Todo: Future update
+        # --------------------------------------------------
+        # Future MessageHistory Integration
+        # --------------------------------------------------
+        if (hasattr(self.controller, "load_history")and callable(self.controller.load_history)):
+            try:
+                history = self.controller.load_history(peer_id)
+                self.main_window.clear_chat()
+                
+                for record in history:
+                    direction = record.get("direction")
+                    sender = record.get("sender", username)
+                    content = record.get("content", "")
+                    
+                    if direction == "sent":
+                        self.main_window.add_sent_message(
+                            "me",
+                            username,
+                            content
+                        )
+
+                    else:
+                        self.main_window.add_received_message(
+                            sender,
+                            content
+                        )
+
+            except Exception as exc:
+                self._add_system(f"History load failed: {exc}")
+        """
+
     def _handle_peer_connect(self, peer_id, peer_info):
         if self.controller is None:
             return

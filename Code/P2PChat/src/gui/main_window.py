@@ -10,18 +10,17 @@ from gui.contact_panel import ContactPanel
 from gui.statusbar import StatusBar
 
 class MainWindow(ctk.CTkFrame):
-    """Main GUI container.
+    """
+    Main GUI coordinator.
 
     Responsibilities:
     - Layout management
-    - Chat rendering
-    - Discovery rendering
-    - Contact rendering
-    - Status rendering
-
-    No networking logic.
+    - Sidebar integration
+    - Contact integration
+    - Chat integration
+    - Status integration
     """
-
+    
     def __init__(
         self,
         master,
@@ -37,20 +36,10 @@ class MainWindow(ctk.CTkFrame):
             sticky="nsew"
         )
 
-        self.grid_rowconfigure(
-            0,
-            weight=1
-        )
+        self.grid_rowconfigure(0, weight=1)
 
-        self.grid_columnconfigure(
-            0,
-            weight=3
-        )
-
-        self.grid_columnconfigure(
-            1,
-            weight=1
-        )
+        self.grid_columnconfigure(0, weight=3)
+        self.grid_columnconfigure(1, weight=1)
 
         self._build_chat_area()
 
@@ -66,9 +55,7 @@ class MainWindow(ctk.CTkFrame):
 
     def _build_chat_area(self):
 
-        self.chat_frame = ctk.CTkFrame(
-            self
-        )
+        self.chat_frame = ctk.CTkFrame(self)
 
         self.chat_frame.grid(
             row=0,
@@ -78,21 +65,16 @@ class MainWindow(ctk.CTkFrame):
             pady=10
         )
 
-        self.chat_frame.grid_rowconfigure(
-            1,
-            weight=1
-        )
+        self.chat_frame.grid_rowconfigure(1, weight=1)
+        self.chat_frame.grid_columnconfigure(0, weight=1)
 
-        self.chat_frame.grid_columnconfigure(
-            0,
-            weight=1
-        )
-
-        # Header
+        # ------------------------------------------------
+        # Chat Header
+        # ------------------------------------------------
 
         self.chat_header = ctk.CTkFrame(
             self.chat_frame,
-            height=50
+            height=60
         )
 
         self.chat_header.grid(
@@ -120,10 +102,28 @@ class MainWindow(ctk.CTkFrame):
             column=0,
             sticky="w",
             padx=10,
-            pady=10
+            pady=(6, 0)
         )
 
-        # Chat
+        self.chat_info_label = ctk.CTkLabel(
+            self.chat_header,
+            text="Status: Offline | Trust: NEW",
+            anchor="w",
+            text_color="#a6adc8",
+            font=("Consolas", 11)
+        )
+
+        self.chat_info_label.grid(
+            row=1,
+            column=0,
+            sticky="w",
+            padx=10,
+            pady=(0, 6)
+        )
+
+        # ------------------------------------------------
+        # Chat Box
+        # ------------------------------------------------
 
         self.chat_box = ChatBox(
             self.chat_frame
@@ -137,7 +137,9 @@ class MainWindow(ctk.CTkFrame):
             pady=5
         )
 
-        # Input
+        # ------------------------------------------------
+        # Input Area
+        # ------------------------------------------------
 
         self.input_frame = ctk.CTkFrame(
             self.chat_frame
@@ -215,15 +217,8 @@ class MainWindow(ctk.CTkFrame):
             pady=10
         )
 
-        self.right_panel.grid_rowconfigure(
-            1,
-            weight=1
-        )
-
-        self.right_panel.grid_rowconfigure(
-            2,
-            weight=1
-        )
+        self.right_panel.grid_rowconfigure(1, weight=1)
+        self.right_panel.grid_rowconfigure(2, weight=0)
 
         self.sidebar = Sidebar(
             self.right_panel,
@@ -262,10 +257,7 @@ class MainWindow(ctk.CTkFrame):
     # CALLBACKS
     # ==================================================
 
-    def set_send_callback(
-        self,
-        callback
-    ):
+    def set_send_callback(self, callback):
 
         self.send_button.configure(
             command=callback
@@ -276,10 +268,7 @@ class MainWindow(ctk.CTkFrame):
             lambda _e: callback()
         )
 
-    def set_broadcast_callback(
-        self,
-        callback
-    ):
+    def set_broadcast_callback(self, callback):
 
         self.broadcast_button.configure(
             command=callback
@@ -289,21 +278,14 @@ class MainWindow(ctk.CTkFrame):
     # CHAT API
     # ==================================================
 
-    def add_system_message(
-        self,
-        message: str
-    ):
-
-        self.chat_box.add_system(
-            message
-        )
+    def add_system_message(self, message: str):
+        self.chat_box.add_system(message)
 
     def add_received_message(
         self,
         sender: str,
         message: str
     ):
-
         self.chat_box.add_received(
             sender,
             message
@@ -315,7 +297,6 @@ class MainWindow(ctk.CTkFrame):
         recipient: str,
         message: str
     ):
-
         self.chat_box.add_sent(
             sender,
             recipient,
@@ -323,7 +304,6 @@ class MainWindow(ctk.CTkFrame):
         )
 
     def clear_chat(self):
-
         self.chat_box.clear()
 
     # ==================================================
@@ -334,10 +314,7 @@ class MainWindow(ctk.CTkFrame):
         self,
         peers: dict
     ):
-
-        self.sidebar.update_peers(
-            peers
-        )
+        self.sidebar.update_peers(peers)
 
     # ==================================================
     # CONTACT API
@@ -347,7 +324,6 @@ class MainWindow(ctk.CTkFrame):
         self,
         contacts: list
     ):
-
         if hasattr(
             self.contact_panel,
             "load_contacts"
@@ -365,74 +341,57 @@ class MainWindow(ctk.CTkFrame):
         text: str,
         color: str = "#a6adc8"
     ):
-
-        if hasattr(
-            self.status_bar,
-            "set_status"
-        ):
-            self.status_bar.set_status(
-                text,
-                color
-            )
+        self.status_bar.set_status(
+            text,
+            color
+        )
 
     # ==================================================
-    # HEADER API
+    # CHAT HEADER API
     # ==================================================
 
     def set_active_chat(
         self,
-        username: str
+        username: str,
+        status: str = "offline",
+        trust_state: str = "NEW"
     ):
-
         self.chat_target_label.configure(
             text=username
+        )
+
+        self.chat_info_label.configure(
+            text=(
+                f"Status: {status.upper()} | "
+                f"Trust: {trust_state}"
+            )
         )
 
     # ==================================================
     # INPUT API
     # ==================================================
 
-    def get_message_text(
-        self
-    ) -> str:
-
+    def get_message_text(self) -> str:
         return self.message_entry.get()
 
-    def clear_message_text(
-        self
-    ):
+    def clear_message_text(self):
+        self.message_entry.delete(0, "end")
 
-        self.message_entry.delete(
-            0,
-            "end"
-        )
-
-    def focus_message_box(
-        self
-    ):
-
+    def focus_message_box(self):
         self.message_entry.focus_set()
 
-    def enable_input(
-        self
-    ):
-
+    def enable_input(self):
         self.message_entry.configure(
             state="normal"
         )
-
         self.send_button.configure(
             state="normal"
         )
 
-    def disable_input(
-        self
-    ):
-
+    def disable_input(self):
         self.message_entry.configure(
             state="disabled"
         )
-
         self.send_button.configure(
             state="disabled"
         )
