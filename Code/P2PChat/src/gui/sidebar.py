@@ -1,4 +1,4 @@
-"""Sidebar module for P2PChat Sprint 3."""
+"""Modern Sidebar for P2PChat."""
 
 from __future__ import annotations
 
@@ -12,48 +12,33 @@ TRUST_COLORS = {
     "BLOCKED": "#6c7086"
 }
 
+
 class PeerCard(ctk.CTkFrame):
-    """Visual representation of a discovered peer."""
+
     def __init__(
         self,
         master,
         peer_id: str,
         peer_info: dict,
         on_select=None,
-        on_connect=None,
         **kwargs
     ):
         super().__init__(
             master,
-            corner_radius=8,
-            fg_color="#313145",
-            **kwargs
+            corner_radius=12,
+            fg_color="#313244",
+            height=72
         )
 
         self.peer_id = peer_id
         self.peer_info = peer_info
-
         self._on_select = on_select
-        self._on_connect = on_connect
 
-        self.grid_columnconfigure(
-            0,
-            weight=1
-        )
+        self.grid_columnconfigure(1, weight=1)
 
         username = peer_info.get(
             "username",
             "Unknown"
-        )
-
-        ip = peer_info.get(
-            "ip",
-            "?"
-        )
-
-        port = peer_info.get(
-            "port",
-            "?"
         )
 
         status = peer_info.get(
@@ -66,7 +51,7 @@ class PeerCard(ctk.CTkFrame):
             "NEW"
         )
 
-        status_icon = {
+        icon = {
             "online": "🟢",
             "connected": "🔗",
             "offline": "⚪",
@@ -76,34 +61,34 @@ class PeerCard(ctk.CTkFrame):
             "⚪"
         )
 
-        self.title_label = ctk.CTkLabel(
+        # avatar
+        self.avatar = ctk.CTkLabel(
             self,
-            text=f"{status_icon} {username}",
+            text="👤",
+            font=("Segoe UI Emoji", 22)
+        )
+
+        self.avatar.grid(
+            row=0,
+            column=0,
+            rowspan=2,
+            padx=(10, 8),
+            pady=8
+        )
+
+        # username
+        self.name_label = ctk.CTkLabel(
+            self,
+            text=f"{icon} {username}",
             anchor="w",
             font=("Arial", 13, "bold")
         )
 
-        self.title_label.grid(
+        self.name_label.grid(
             row=0,
-            column=0,
-            sticky="ew",
-            padx=8,
-            pady=(6, 0)
-        )
-
-        self.addr_label = ctk.CTkLabel(
-            self,
-            text=f"{ip}:{port}",
-            anchor="w",
-            text_color="#a6adc8",
-            font=("Consolas", 10)
-        )
-
-        self.addr_label.grid(
-            row=1,
-            column=0,
-            sticky="ew",
-            padx=8
+            column=1,
+            sticky="w",
+            pady=(10, 0)
         )
 
         trust_color = TRUST_COLORS.get(
@@ -111,90 +96,45 @@ class PeerCard(ctk.CTkFrame):
             "#a6adc8"
         )
 
-        self.trust_label = ctk.CTkLabel(
+        self.info_label = ctk.CTkLabel(
             self,
-            text=f"Trust: {trust_state}",
-            anchor="w",
+            text=trust_state,
             text_color=trust_color,
+            anchor="w",
             font=("Consolas", 10)
         )
 
-        self.trust_label.grid(
-            row=2,
-            column=0,
+        self.info_label.grid(
+            row=1,
+            column=1,
             sticky="w",
-            padx=8,
-            pady=(0, 4)
+            pady=(0, 10)
         )
 
-        short_id = (
-            peer_id[:12] + "..."
-            if len(peer_id) > 12
-            else peer_id
+        self.bind(
+            "<Button-1>",
+            self._handle_select
         )
 
-        self.peer_id_label = ctk.CTkLabel(
-            self,
-            text=short_id,
-            anchor="w",
-            text_color="#6c7086",
-            font=("Consolas", 9)
+        self.avatar.bind(
+            "<Button-1>",
+            self._handle_select
         )
 
-        self.peer_id_label.grid(
-            row=3,
-            column=0,
-            sticky="w",
-            padx=8
+        self.name_label.bind(
+            "<Button-1>",
+            self._handle_select
         )
 
-        self.button_frame = ctk.CTkFrame(
-            self,
-            fg_color="transparent"
+        self.info_label.bind(
+            "<Button-1>",
+            self._handle_select
         )
 
-        self.button_frame.grid(
-            row=4,
-            column=0,
-            sticky="ew",
-            padx=6,
-            pady=(0, 6)
-        )
+    def _handle_select(self, _event=None):
 
-        self.select_button = ctk.CTkButton(
-            self.button_frame,
-            text="Select",
-            width=70,
-            command=self._handle_select
-        )
-
-        self.select_button.pack(
-            side="left",
-            padx=(0, 4)
-        )
-
-        self.connect_button = ctk.CTkButton(
-            self.button_frame,
-            text="Connect",
-            width=80,
-            fg_color="#89b4fa",
-            command=self._handle_connect
-        )
-
-        self.connect_button.pack(
-            side="left"
-        )
-
-    def _handle_select(self):
         if self._on_select:
             self._on_select(
-                self.peer_id,
-                self.peer_info
-            )
-
-    def _handle_connect(self):
-        if self._on_connect:
-            self._on_connect(
                 self.peer_id,
                 self.peer_info
             )
@@ -206,12 +146,11 @@ class PeerCard(ctk.CTkFrame):
         self.configure(
             fg_color="#45475a"
             if selected
-            else "#313145"
+            else "#313244"
         )
 
 
 class Sidebar(ctk.CTkFrame):
-    """Discovery sidebar."""
 
     def __init__(
         self,
@@ -222,30 +161,41 @@ class Sidebar(ctk.CTkFrame):
     ):
         super().__init__(
             master,
-            width=260,
-            corner_radius=0,
             fg_color="#181825",
+            width=280,
             **kwargs
         )
 
         self._on_peer_select = on_peer_select
-        self._on_peer_connect = on_peer_connect
-
         self.selected_peer_id = None
         self.peer_cards = {}
 
+        # title
         self.title = ctk.CTkLabel(
             self,
-            text="🌐 Nearby Users",
-            font=("Consolas", 14, "bold")
+            text="Chats",
+            font=("Arial", 18, "bold")
         )
 
         self.title.pack(
-            pady=(15, 5),
-            padx=10,
-            anchor="w"
+            anchor="w",
+            padx=12,
+            pady=(15, 5)
         )
 
+        # search
+        self.search_entry = ctk.CTkEntry(
+            self,
+            placeholder_text="Search..."
+        )
+
+        self.search_entry.pack(
+            fill="x",
+            padx=10,
+            pady=(0, 10)
+        )
+
+        # scroll area
         self.scroll_frame = ctk.CTkScrollableFrame(
             self,
             fg_color="transparent"
@@ -258,19 +208,19 @@ class Sidebar(ctk.CTkFrame):
             pady=5
         )
 
-        self.info_label = ctk.CTkLabel(
+        self.footer = ctk.CTkLabel(
             self,
-            text="── No peer selected ──",
+            text="No peer selected",
             text_color="#6c7086",
-            font=("Consolas", 11)
+            font=("Consolas", 10)
         )
 
-        self.info_label.pack(
-            side="bottom",
-            pady=15
+        self.footer.pack(
+            pady=8
         )
 
     def clear(self):
+
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
 
@@ -280,6 +230,7 @@ class Sidebar(ctk.CTkFrame):
         self,
         peers: dict
     ):
+
         self.clear()
 
         if not peers:
@@ -300,15 +251,14 @@ class Sidebar(ctk.CTkFrame):
 
             card = PeerCard(
                 self.scroll_frame,
-                peer_id=peer_id,
-                peer_info=peer_info,
-                on_select=self._select_peer,
-                on_connect=self._connect_peer
+                peer_id,
+                peer_info,
+                on_select=self._select_peer
             )
 
             card.pack(
                 fill="x",
-                padx=4,
+                padx=5,
                 pady=4
             )
 
@@ -321,6 +271,7 @@ class Sidebar(ctk.CTkFrame):
         peer_id,
         peer_info
     ):
+
         self.selected_peer_id = peer_id
 
         for pid, card in self.peer_cards.items():
@@ -334,25 +285,13 @@ class Sidebar(ctk.CTkFrame):
             peer_id
         )
 
-        self.info_label.configure(
+        self.footer.configure(
             text=f"Selected: {username}"
         )
 
         if self._on_peer_select:
 
             self._on_peer_select(
-                peer_id,
-                peer_info
-            )
-
-    def _connect_peer(
-        self,
-        peer_id,
-        peer_info
-    ):
-        if self._on_peer_connect:
-
-            self._on_peer_connect(
                 peer_id,
                 peer_info
             )

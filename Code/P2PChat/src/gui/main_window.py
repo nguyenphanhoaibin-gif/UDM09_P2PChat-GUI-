@@ -6,7 +6,7 @@ import customtkinter as ctk
 
 from gui.chatbox import ChatBox
 from gui.sidebar import Sidebar
-from gui.contact_panel import ContactPanel
+from gui.peer_details import PeerDetails
 from gui.statusbar import StatusBar
 
 class MainWindow(ctk.CTkFrame):
@@ -37,12 +37,14 @@ class MainWindow(ctk.CTkFrame):
         )
 
         self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
 
-        self.grid_columnconfigure(0, weight=3)
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=2)
+        self.grid_columnconfigure(1, weight=6)
+        self.grid_columnconfigure(2, weight=2)
 
         self._build_chat_area()
-
+        self._build_peer_details()
         self._build_sidebar(
             on_peer_select,
             on_peer_connect,
@@ -55,17 +57,20 @@ class MainWindow(ctk.CTkFrame):
 
     def _build_chat_area(self):
 
-        self.chat_frame = ctk.CTkFrame(self)
+        self.chat_frame = ctk.CTkFrame(
+            self,
+            fg_color="#1e1e2e"
+        )
 
         self.chat_frame.grid(
             row=0,
-            column=0,
+            column=1,
             sticky="nsew",
-            padx=(10, 5),
+            padx=5,
             pady=10
         )
 
-        self.chat_frame.grid_rowconfigure(1, weight=1)
+        self.chat_frame.grid_rowconfigure(1, weight=10)
         self.chat_frame.grid_columnconfigure(0, weight=1)
 
         # ------------------------------------------------
@@ -74,7 +79,9 @@ class MainWindow(ctk.CTkFrame):
 
         self.chat_header = ctk.CTkFrame(
             self.chat_frame,
-            height=60
+            height=64,
+            fg_color="#181825",
+            corner_radius=14
         )
 
         self.chat_header.grid(
@@ -90,35 +97,64 @@ class MainWindow(ctk.CTkFrame):
             weight=1
         )
 
+        # ==================================================
+        # Peer Avatar
+        # ==================================================
+
+        self.avatar_label = ctk.CTkLabel(
+            self.chat_header,
+            text="👤",
+            font=("Segoe UI Emoji", 26)
+        )
+
+        self.avatar_label.grid(
+            row=0,
+            column=0,
+            rowspan=2,
+            padx=(10, 10),
+            pady=6
+        )
+
+        # ==================================================
+        # Username
+        # ==================================================
+
         self.chat_target_label = ctk.CTkLabel(
             self.chat_header,
             text="No peer selected",
-            font=("Arial", 14, "bold"),
+            font=("Arial", 15, "bold"),
             anchor="w"
         )
 
         self.chat_target_label.grid(
             row=0,
-            column=0,
+            column=1,
             sticky="w",
-            padx=10,
             pady=(6, 0)
         )
 
+        # ==================================================
+        # Status
+        # ==================================================
+
         self.chat_info_label = ctk.CTkLabel(
             self.chat_header,
-            text="Status: Offline | Trust: NEW",
-            anchor="w",
+            text="⚪ Offline | NEW",
             text_color="#a6adc8",
-            font=("Consolas", 11)
+            font=("Consolas", 11),
+            anchor="w"
         )
 
         self.chat_info_label.grid(
             row=1,
-            column=0,
+            column=1,
             sticky="w",
-            padx=10,
             pady=(0, 6)
+        )
+
+        self.chat_header.grid_columnconfigure(
+            1,
+            weight=1
         )
 
         # ------------------------------------------------
@@ -135,6 +171,22 @@ class MainWindow(ctk.CTkFrame):
             sticky="nsew",
             padx=10,
             pady=5
+        )
+        
+        self.empty_label = ctk.CTkLabel(
+            self.chat_frame,
+            text=(
+                "💬\n\n"
+                "Select a peer to start chatting"
+            ),
+            text_color="#6c7086",
+            font=("Arial", 18)
+        )
+
+        self.empty_label.place(
+            relx=0.5,
+            rely=0.45,
+            anchor="center"
         )
 
         # ------------------------------------------------
@@ -160,7 +212,10 @@ class MainWindow(ctk.CTkFrame):
 
         self.message_entry = ctk.CTkEntry(
             self.input_frame,
-            placeholder_text="Enter message..."
+            placeholder_text="Type a message...",
+            height=42,
+            corner_radius=21,
+            font=("Arial", 13)
         )
 
         self.message_entry.grid(
@@ -173,8 +228,11 @@ class MainWindow(ctk.CTkFrame):
 
         self.send_button = ctk.CTkButton(
             self.input_frame,
-            text="Send",
-            width=100
+            text="➤",
+            width=48,
+            height=42,
+            corner_radius=21,
+            font=("Arial", 15, "bold")
         )
 
         self.send_button.grid(
@@ -186,16 +244,15 @@ class MainWindow(ctk.CTkFrame):
 
         self.broadcast_button = ctk.CTkButton(
             self.input_frame,
-            text="Broadcast",
-            width=100
+            text="📢",
+            width=48,
+            height=42,
+            corner_radius=21,
+            fg_color="#45475a",
+            hover_color="#585b70"
         )
 
-        self.broadcast_button.grid(
-            row=0,
-            column=2,
-            padx=(0, 10),
-            pady=10
-        )
+        self.broadcast_button.grid_remove()
 
     def _build_sidebar(
         self,
@@ -204,24 +261,8 @@ class MainWindow(ctk.CTkFrame):
         on_contact_select
     ):
 
-        self.right_panel = ctk.CTkFrame(
-            self,
-            width=320
-        )
-
-        self.right_panel.grid(
-            row=0,
-            column=1,
-            sticky="nsew",
-            padx=(5, 10),
-            pady=10
-        )
-
-        self.right_panel.grid_rowconfigure(1, weight=1)
-        self.right_panel.grid_rowconfigure(2, weight=0)
-
         self.sidebar = Sidebar(
-            self.right_panel,
+            self,
             on_peer_select=on_peer_select,
             on_peer_connect=on_peer_connect
         )
@@ -229,30 +270,36 @@ class MainWindow(ctk.CTkFrame):
         self.sidebar.grid(
             row=0,
             column=0,
-            sticky="nsew"
-        )
-
-        self.contact_panel = ContactPanel(
-            self.right_panel,
-            on_contact_select=on_contact_select
-        )
-
-        self.contact_panel.grid(
-            row=1,
-            column=0,
-            sticky="nsew"
+            sticky="nsew",
+            padx=(10, 5),
+            pady=10
         )
 
         self.status_bar = StatusBar(
-            self.right_panel
+            self
         )
 
         self.status_bar.grid(
-            row=2,
+            row=1,
             column=0,
+            columnspan=3,
             sticky="ew"
         )
+    
+    def _build_peer_details(self):
 
+        self.details_panel = PeerDetails(
+            self
+        )
+
+        self.details_panel.grid(
+            row=0,
+            column=2,
+            sticky="nsew",
+            padx=(5, 10),
+            pady=10
+        )
+        
     # ==================================================
     # CALLBACKS
     # ==================================================
@@ -305,6 +352,14 @@ class MainWindow(ctk.CTkFrame):
 
     def clear_chat(self):
         self.chat_box.clear()
+        
+    def update_peer_details(
+        self,
+        peer_info: dict
+    ):
+        self.details_panel.update_peer(
+            peer_info
+        )
 
     # ==================================================
     # DISCOVERY API
@@ -315,7 +370,11 @@ class MainWindow(ctk.CTkFrame):
         peers: dict
     ):
         self.sidebar.update_peers(peers)
-
+        self.status_bar.set_stats(
+            peers=len(peers),
+            contacts=0,
+            connected=0
+        )
     # ==================================================
     # CONTACT API
     # ==================================================
@@ -324,13 +383,10 @@ class MainWindow(ctk.CTkFrame):
         self,
         contacts: list
     ):
-        if hasattr(
-            self.contact_panel,
-            "load_contacts"
-        ):
-            self.contact_panel.load_contacts(
-                contacts
-            )
+        """
+        Reserved for ContactBook integration.
+        """
+        pass
 
     # ==================================================
     # STATUS API
@@ -356,15 +412,38 @@ class MainWindow(ctk.CTkFrame):
         status: str = "offline",
         trust_state: str = "NEW"
     ):
+        
+        if hasattr(self, "empty_label"):
+            self.empty_label.place_forget()
+
+        status_icon = {
+            "online": "🟢",
+            "connected": "🔗",
+            "offline": "⚪",
+            "connecting": "🟡"
+        }.get(
+            status,
+            "⚪"
+        )
+
+        trust_color = {
+            "NEW": "#f9e2af",
+            "TRUSTED": "#89b4fa",
+            "VERIFIED": "#a6e3a1",
+            "MISMATCH": "#f38ba8",
+            "BLOCKED": "#6c7086"
+        }.get(
+            trust_state,
+            "#a6adc8"
+        )
+
         self.chat_target_label.configure(
             text=username
         )
 
         self.chat_info_label.configure(
-            text=(
-                f"Status: {status.upper()} | "
-                f"Trust: {trust_state}"
-            )
+            text=f"{status_icon} {status.capitalize()} | 🔐 {trust_state}",
+            text_color=trust_color
         )
 
     # ==================================================
@@ -394,4 +473,21 @@ class MainWindow(ctk.CTkFrame):
         )
         self.send_button.configure(
             state="disabled"
+        )
+        
+    def set_trust_callback(
+        self,
+        callback
+    ):
+        self.details_panel.set_trust_callback(
+            callback
+        )
+
+
+    def set_block_callback(
+        self,
+        callback
+    ):
+        self.details_panel.set_block_callback(
+            callback
         )

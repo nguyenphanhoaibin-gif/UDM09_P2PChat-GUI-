@@ -1,21 +1,16 @@
-"""Status bar for displaying application state information."""
+"""Enhanced Status Bar."""
+
+from __future__ import annotations
 
 import customtkinter as ctk
 
 
 class StatusBar(ctk.CTkFrame):
-    """Global application status bar.
-    States:
-        Initializing
-        Discovery
-        Connected
-        Handshake
-        Encrypted
-        Error
-    """
+
     def __init__(self, master, **kwargs):
-        super().__init__(master,
-            height=30,
+        super().__init__(
+            master,
+            height=34,
             corner_radius=0,
             fg_color="#11111b",
             **kwargs
@@ -23,79 +18,98 @@ class StatusBar(ctk.CTkFrame):
 
         self.grid_columnconfigure(0, weight=1)
 
-        self.label = ctk.CTkLabel(
+        self.status_label = ctk.CTkLabel(
             self,
             text="🔄 Initializing...",
             anchor="w",
-            font=("Consolas", 12),
+            font=("Consolas", 11),
             text_color="#6c7086"
         )
 
-        self.label.grid(
+        self.status_label.grid(
             row=0,
             column=0,
-            sticky="ew",
-            padx=10,
-            pady=4
+            sticky="w",
+            padx=(10, 0)
         )
 
-    # ------------------------------------------------------------------ #
-    # Generic API
-    # ------------------------------------------------------------------ #
+        self.stats_label = ctk.CTkLabel(
+            self,
+            text="Peers: 0",
+            anchor="e",
+            font=("Consolas", 11),
+            text_color="#6c7086"
+        )
 
-    def set_status(self, text: str, color: str = "#6c7086") -> None:
-        """Set status text and color."""
-        self.label.configure( text=text, text_color=color )
+        self.stats_label.grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(0, 10)
+        )
 
-    # ------------------------------------------------------------------ #
-    # Convenience Helpers
-    # ------------------------------------------------------------------ #
+    def set_status(
+        self,
+        text: str,
+        color: str = "#6c7086"
+    ):
+        self.status_label.configure(
+            text=text,
+            text_color=color
+        )
 
-    def set_initializing(self) -> None:
-        """Set status to initializing."""
+    def set_stats(
+        self,
+        peers: int = 0,
+        contacts: int = 0,
+        connected: int = 0
+    ):
+        self.stats_label.configure(
+            text=(
+                f"Peers:{peers}  "
+                f"Contacts:{contacts}  "
+                f"Connected:{connected}"
+            )
+        )
+
+    def set_initializing(self):
         self.set_status(
             "🔄 Initializing...",
             "#6c7086"
         )
 
-    def set_discovery_running(self) -> None:
-        """Set status to discovery running."""
+    def set_discovery_running(self):
         self.set_status(
             "🔍 Discovering peers...",
             "#89b4fa"
         )
 
-    def set_connected(self, peer: str) -> None:
-        """Set status to connected."""
+    def set_connected(self, peer: str):
         self.set_status(
             f"🔗 Connected: {peer}",
             "#a6e3a1"
         )
 
-    def set_handshake(self) -> None:
-        """Set status to handshake."""
+    def set_handshake(self):
         self.set_status(
             "🤝 Performing handshake...",
             "#f9e2af"
         )
 
-    def set_encrypted(self) -> None:
-        """Set status to encrypted."""
+    def set_encrypted(self):
         self.set_status(
             "🔐 Encrypted session active",
             "#a6e3a1"
         )
 
-    def set_disconnected(self) -> None:
-        """Set status to disconnected."""
+    def set_disconnected(self):
         self.set_status(
             "❌ Disconnected",
             "#f38ba8"
         )
 
-    def set_error(self, message: str) -> None:
-        """Set status to error."""
+    def set_error(self, message: str):
         self.set_status(
-            f"⚠️ {message}",
+            f"⚠ {message}",
             "#f38ba8"
         )

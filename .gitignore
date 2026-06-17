@@ -1,32 +1,39 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
+# Python
+**pycache**/
 *.py[cod]
-*.pyc
 
-# Virtual environments
+
+# Virtual Environment
+.venv/
 venv/
-.env/
 
 # IDE
 .vscode/
 .idea/
 
-# OS
-.DS_Store
-Thumbs.db
+# Testing
+.pytest_cache/
 
-# Build files
+# Build
 build/
 dist/
+
+# Security
+data/
+keys/
+*.pem
+
+# File Transfer
+downloads/
+received_files/
 
 # Logs
 *.log
 
-# PyInstaller
-*.spec
-
-# Git
-.git
-
-# Data
-data/
+#Archives
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+*.json

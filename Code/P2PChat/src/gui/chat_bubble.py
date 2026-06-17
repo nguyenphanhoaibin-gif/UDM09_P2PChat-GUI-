@@ -1,50 +1,77 @@
+from __future__ import annotations
+
 import customtkinter as ctk
-from datetime import datetime
 
-def add_chat_bubble(scrollable_frame, message, is_me=True):
+
+def add_chat_bubble(
+    parent,
+    message: str,
+    is_me: bool = False
+):
     """
-    Create chat bubbles with integrated automatic time settings.
-    - scrollable_frame: Main chat frame (CTkScrollableFrame)
-    - message: Message content
-    - is_me: True (self sent, right-aligned), False (other sent, left-aligned)
+    Telegram-style message bubble.
     """
-    # 1. Set color and alignment
+
+    row = ctk.CTkFrame(
+        parent,
+        fg_color="transparent"
+    )
+
+    row.pack(
+        fill="x",
+        padx=8,
+        pady=4
+    )
+
     if is_me:
-        bg_color = "#89b4fa"      # pastel blue background
-        text_color = "#11111b"    # black text
-        time_color = "#45475a"    # dark gray time
-        align = "e"               # right align
+
+        container = ctk.CTkFrame(
+            row,
+            fg_color="#89b4fa",
+            corner_radius=18
+        )
+
+        container.pack(
+            anchor="e",
+            padx=(120, 5)
+        )
+
+        label = ctk.CTkLabel(
+            container,
+            text=message,
+            justify="left",
+            wraplength=500,
+            text_color="#11111b",
+            font=("Arial", 13)
+        )
+
+        label.pack(
+            padx=12,
+            pady=8
+        )
+
     else:
-        bg_color = "#313145"      # dark gray background
-        text_color = "#cdd6f4"    # white text
-        time_color = "#a6adc8"    # light gray time
-        align = "w"               # left align
 
-    # 2. Create hidden frame to hold position (1 line of chat)
-    row_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
-    row_frame.pack(fill="x", pady=5, padx=10)
+        container = ctk.CTkFrame(
+            row,
+            fg_color="#313244",
+            corner_radius=18
+        )
 
-    # 3. Create chat bubble (Frame with rounded corners)
-    bubble = ctk.CTkFrame(row_frame, fg_color=bg_color, corner_radius=15)
-    bubble.pack(anchor=align)
+        container.pack(
+            anchor="w",
+            padx=(5, 120)
+        )
 
-    # 4. Insert message content
-    text_label = ctk.CTkLabel(
-        bubble, 
-        text=message, 
-        text_color=text_color,
-        font=("Consolas", 13),
-        wraplength=350,  # Force text to wrap to next line
-        justify="left"
-    )
-    text_label.pack(padx=15, pady=(10, 0), anchor="w") 
+        label = ctk.CTkLabel(
+            container,
+            text=message,
+            justify="left",
+            wraplength=500,
+            font=("Arial", 13)
+        )
 
-    # 5. Insert time at the bottom corner
-    current_time = datetime.now().strftime("%H:%M")
-    time_label = ctk.CTkLabel(
-        bubble, 
-        text=current_time, 
-        text_color=time_color,
-        font=("Consolas", 10, "italic")
-    )
-    time_label.pack(padx=15, pady=(0, 6), anchor="e")
+        label.pack(
+            padx=12,
+            pady=8
+        )
