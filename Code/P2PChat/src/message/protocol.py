@@ -3,9 +3,10 @@ import json
 import struct
 import uuid
 from typing import Any, Optional
+
 from cryptography.fernet import InvalidToken
 from security.crypto import CryptoHandler
-
+from config import MAX_PACKET_SIZE
 class PacketType:
     HANDSHAKE = "handshake"
     HANDSHAKE_ACK = "handshake_ack"
@@ -38,8 +39,8 @@ class ProtocolHandler:
     """Central packet creation, framing, validation, and socket I/O."""
 
     HEADER_SIZE = 4  
-    MAX_PACKET_SIZE = 1024 * 1024  # 1 MB max packet size to prevent abuse
-
+    MAX_PACKET_SIZE = MAX_PACKET_SIZE
+    
     def __init__(self) -> None:
         # No state needed for now, but this is where we would store protocol version, supported features, etc.
         pass
@@ -173,7 +174,7 @@ class ProtocolHandler:
 
             (packet_length,) = struct.unpack("!I", header)
 
-            if packet_length > self.MAX_PACKET_SIZE:
+            if packet_length > MAX_PACKET_SIZE:
                 print(
                     f"[WARNING] Oversized packet ({packet_length} bytes) — dropping"
                 )
@@ -195,5 +196,3 @@ class ProtocolHandler:
         except (json.JSONDecodeError, UnicodeDecodeError, struct.error) as error:
             print(f"[WARNING] receive_packet: malformed data — {error}")
             return None
-        
-        

@@ -37,3 +37,4 @@ received_files/
 *.tar
 *.gz
 *.json
+.coverage

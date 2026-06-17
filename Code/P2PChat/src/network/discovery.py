@@ -8,12 +8,13 @@ import time
 from typing import Callable, Optional
 
 from security.jwt_handler import JWTHandler
+from config import (
+    DISCOVERY_PORT,
+    PEER_TIMEOUT,
+    PRESENCE_INTERVAL
+)
 
 logger = logging.getLogger(__name__)
-
-DISCOVERY_PORT    = 15000
-PEER_TIMEOUT      = 15   # seconds before a peer is considered offline
-PRESENCE_INTERVAL = 5    # seconds between broadcast announcements
 
 # Packet type constants
 DISCOVERY          = "discovery"

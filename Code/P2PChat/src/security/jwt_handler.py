@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import jwt
 
+from config import JWT_EXPIRE_HOURS
 
 class JWTHandler:
         

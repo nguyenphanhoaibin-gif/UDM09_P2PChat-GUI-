@@ -13,6 +13,7 @@ from network.discovery import DiscoveryService, PEER_TIMEOUT
 from identity.identity_manager import IdentityManager
 from trust.tofu_engine import TOFUEngine
 from security.jwt_handler import JWTHandler
+from config import SOCKET_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class P2PNode:
         """Bind the TCP server, start discovery, and begin accepting connections."""
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.server_socket.settimeout(1)
+        self.server_socket.settimeout(SOCKET_TIMEOUT)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen()
         self.is_running = True

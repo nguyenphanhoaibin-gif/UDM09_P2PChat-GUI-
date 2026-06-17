@@ -6,3 +6,6 @@ cryptography
 
 #JWT
 PyJWT
+
+#Testing
+pytest
