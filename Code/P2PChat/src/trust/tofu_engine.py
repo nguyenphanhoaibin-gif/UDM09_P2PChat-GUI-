@@ -38,7 +38,9 @@ class TOFUEngine:
 
         if stored_fp == fingerprint:
             # Fingerprint matches — promote to VERIFIED if not already.
-            return trust_state
+            if trust_state != TrustState.VERIFIED:
+                self.store.update_peer(peer_id, fingerprint, TrustState.VERIFIED)
+            return TrustState.VERIFIED
 
         # Fingerprint changed — potential key rotation or MITM.
         return TrustState.MISMATCH
