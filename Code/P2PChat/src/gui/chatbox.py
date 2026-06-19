@@ -1,109 +1,54 @@
+"""ChatBox: scrollable chat display with bubble-style messages."""
 from __future__ import annotations
 
+from datetime import datetime
 import customtkinter as ctk
-
 from gui.chat_bubble import add_chat_bubble
 
-class ChatBox(ctk.CTkFrame):
 
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
+class ChatBox(ctk.CTkFrame):
+    """Scrollable message area.  Thread-safe via after(0, ...)."""
+
+    def __init__(self, master, **kwargs) -> None:
+        super().__init__(master, fg_color="transparent", **kwargs)
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        self.scroll = ctk.CTkScrollableFrame(
-            self,
-            fg_color="#1e1e2e"
-        )
+        self._scroll = ctk.CTkScrollableFrame(self, fg_color="#1e1e2e")
+        self._scroll.grid(row=0, column=0, sticky="nsew")
 
-        self.scroll.grid(
-            row=0,
-            column=0,
-            sticky="nsew"
-        )
+    # ------------------------------------------------------------------ #
+    # Public API                                                           #
+    # ------------------------------------------------------------------ #
 
-    # ==========================================
-    # Messages
-    # ==========================================
+    def add_sent(self, sender: str, recipient: str, message: str) -> None:
+        add_chat_bubble(self._scroll, message, sender=sender, is_me=True)
+        self._scroll_bottom()
 
-    def add_sent(
-        self,
-        sender: str,
-        recipient: str,
-        message: str
-    ):
+    def add_received(self, sender: str, message: str) -> None:
+        add_chat_bubble(self._scroll, message, sender=sender, is_me=False)
+        self._scroll_bottom()
 
-        add_chat_bubble(
-            self.scroll,
-            message,
-            is_me=True
-        )
-
-        self.after(
-            50,
-            self.scroll_to_bottom
-        )
-
-    def add_received(
-        self,
-        sender: str,
-        message: str
-    ):
-
-        add_chat_bubble(
-            self.scroll,
-            message,
-            is_me=False
-        )
-
-        self.after(
-            50,
-            self.scroll_to_bottom
-        )
-
-    def add_system(
-        self,
-        text: str
-    ):
-
-        frame = ctk.CTkFrame(
-            self.scroll,
-            fg_color="transparent"
-        )
-
-        frame.pack(
-            fill="x",
-            pady=5
-        )
-
-        label = ctk.CTkLabel(
-            frame,
-            text=text,
+    def add_system(self, text: str) -> None:
+        ts = datetime.now().strftime("%H:%M:%S")
+        row = ctk.CTkFrame(self._scroll, fg_color="transparent")
+        row.pack(fill="x", pady=3)
+        ctk.CTkLabel(
+            row,
+            text=f"── {ts}  {text} ──",
             text_color="#6c7086",
-            font=("Consolas", 11)
-        )
+            font=("Consolas", 10),
+        ).pack()
+        self._scroll_bottom()
 
-        label.pack()
+    def clear(self) -> None:
+        for w in self._scroll.winfo_children():
+            w.destroy()
 
-        self.after(
-            50,
-            self.scroll_to_bottom
-        )
+    # ------------------------------------------------------------------ #
+    # Internal                                                             #
+    # ------------------------------------------------------------------ #
 
-    # ==========================================
-    # Helpers
-    # ==========================================
-
-    def clear(self):
-
-        for widget in self.scroll.winfo_children():
-            widget.destroy()
-
-    def scroll_to_bottom(self):
-
-        try:
-            self.scroll._parent_canvas.yview_moveto(1.0)
-
-        except Exception:
-            pass
+    def _scroll_bottom(self) -> None:
+        self.after(60, lambda: self._scroll._parent_canvas.yview_moveto(1.0))

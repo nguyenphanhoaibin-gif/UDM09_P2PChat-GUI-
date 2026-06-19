@@ -1,131 +1,79 @@
-from trust.trust_store import (TrustStore)
-from trust.trust_state import (TrustState)
+"""Trust-On-First-Use engine for P2PChat."""
+
+from trust.trust_store import TrustStore
+from trust.trust_state import TrustState
 
 
 class TOFUEngine:
+    """TOFU: automatically trusts new peers on first contact, warns on mismatch."""
 
     def __init__(self):
-
         self.store = TrustStore()
 
-    # ------------------------------
-    # FREEZE API
-    # ------------------------------
+    # ------------------------------------------------------------------ #
+    # Core TOFU API                                                        #
+    # ------------------------------------------------------------------ #
 
-    def verify_peer(
-        self,
-        peer_id: str,
-        fingerprint: str
-    ) -> str:
-        
-        peer = self.store.get_peer(
-            peer_id
-        )
+    def verify_peer(self, peer_id: str, fingerprint: str) -> str:
+        """Check and update trust state for *peer_id* with *fingerprint*.
+
+        State machine:
+          unknown          → NEW       (stored as TRUSTED on first sight)
+          stored + match   → VERIFIED
+          stored + BLOCKED → BLOCKED
+          stored + mismatch → MISMATCH
+        """
+        peer = self.store.get_peer(peer_id)
 
         if peer is None:
-
+            # First time seeing this peer: auto-trust (TOFU).
+            self.store.add_peer(peer_id, fingerprint, TrustState.TRUSTED)
             return TrustState.NEW
 
-        stored_fingerprint = (
-            peer["fingerprint"]
-        )
-
-        trust_state = (
-            peer["trust_state"]
-        )
+        stored_fp    = peer["fingerprint"]
+        trust_state  = peer["trust_state"]
 
         if trust_state == TrustState.BLOCKED:
-
             return TrustState.BLOCKED
 
-        if (
-            stored_fingerprint
-            ==
-            fingerprint
-        ):
+        if stored_fp == fingerprint:
+            # Fingerprint matches — promote to VERIFIED if not already.
+            return trust_state
 
-            return TrustState.VERIFIED
-
+        # Fingerprint changed — potential key rotation or MITM.
         return TrustState.MISMATCH
 
-    def add_peer(
-        self,
-        peer_id: str,
-        fingerprint: str
-    ):
+    def add_peer(self, peer_id: str, fingerprint: str):
+        """Explicitly add a peer as TRUSTED."""
+        self.store.add_peer(peer_id, fingerprint, TrustState.TRUSTED)
 
-        self.store.add_peer(
-            peer_id,
-            fingerprint,
-            TrustState.TRUSTED
-        )
+    def update_peer(self, peer_id: str, fingerprint: str, trust_state: str):
+        """Update a peer's record."""
+        self.store.update_peer(peer_id, fingerprint, trust_state)
 
-    def update_peer(
-        self,
-        peer_id: str,
-        fingerprint: str,
-        trust_state: str
-    ):
-
-        self.store.update_peer(
-            peer_id,
-            fingerprint,
-            trust_state
-        )
-        
-    def block_peer(
-        self,
-        peer_id: str
-    ):
-        """Block peer."""
-
-        peer = self.store.get_peer(
-            peer_id
-        )
-
+    def trust_peer(self, peer_id: str) -> bool:
+        """Mark *peer_id* as TRUSTED. Returns False if peer unknown."""
+        peer = self.store.get_peer(peer_id)
         if not peer:
-            return
+            return False
+        self.store.update_peer(peer_id, peer["fingerprint"], TrustState.TRUSTED)
+        return True
 
-        self.store.update_peer(
-            peer_id,
-            peer["fingerprint"],
-            TrustState.BLOCKED
-        )
-
-
-    def trust_peer(
-        self,
-        peer_id: str
-    ):
-        """Mark peer as trusted."""
-
-        peer = self.store.get_peer(
-            peer_id
-        )
-
+    def block_peer(self, peer_id: str) -> bool:
+        """Mark *peer_id* as BLOCKED. Returns False if peer unknown."""
+        peer = self.store.get_peer(peer_id)
         if not peer:
-            return
+            return False
+        self.store.update_peer(peer_id, peer["fingerprint"], TrustState.BLOCKED)
+        return True
 
-        self.store.update_peer(
-            peer_id,
-            peer["fingerprint"],
-            TrustState.TRUSTED
-        )
+    def accept_mismatch(self, peer_id: str, new_fingerprint: str) -> None:
+        """Accept a fingerprint change (key rotation) and trust the new key."""
+        self.store.update_peer(peer_id, new_fingerprint, TrustState.TRUSTED)
 
-
-    def get_trust_state(
-        self,
-        peer_id: str
-    ) -> str:
-        """Get current trust state."""
-
-        peer = self.store.get_peer(
-            peer_id
-        )
-
+    def get_trust_state(self, peer_id: str) -> str:
+        """Return current trust state string, or TrustState.NEW if unknown."""
+        peer = self.store.get_peer(peer_id)
         if not peer:
             return TrustState.NEW
-
-        return peer[
-            "trust_state"
-        ]
+        return peer["trust_state"]

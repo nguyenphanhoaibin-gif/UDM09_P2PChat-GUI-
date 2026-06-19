@@ -49,7 +49,7 @@ class DiscoveryService:
 
         # Assigned by the owning P2PNode; called with (packet, address) for
         # every valid discovery_response received.
-        self.on_peer_found: Optional[Callable[[dict, tuple[str, int]], None]] = None
+        self.on_peer_found: Callable[[dict, tuple[str, int]], None] | None = None
 
     # ------------------------------------------------------------------ #
     # Lifecycle #
@@ -131,6 +131,12 @@ class DiscoveryService:
                 "status": "online",
                 "timestamp": time.time()
             }
+            
+            logger.info(
+                "[DISCOVERY] Broadcasting presence: %s:%s",
+                self.username,
+                self.listen_port,
+            )
 
             sender.sendto(
                 json.dumps(packet).encode("utf-8"),
@@ -161,6 +167,11 @@ class DiscoveryService:
 
             try:
                 data, address = sock.recvfrom(4096)
+                logger.info(
+                    "[DISCOVERY] Packet from %s:%s",
+                    address[0],
+                    address[1],
+                )
                 packet = json.loads(data.decode("utf-8"))
                 self._handle_packet(packet, address)
 
@@ -193,17 +204,44 @@ class DiscoveryService:
     # Packet handling #
     def _handle_packet(self, packet: dict, address: tuple[str, int]) -> None:
         """Dispatch an incoming discovery packet."""
+        logger.info(
+            "[DISCOVERY] Packet type=%s from=%s",
+            packet.get("type"),
+            address,
+        )
         packet_type = packet.get("type")
 
         if packet_type == DISCOVERY:
             # Ignore our own echoes.
-
-            if packet.get("instance_id") == self.instance_id:
+            packet_instance = packet.get("instance_id")
+            if packet_instance == self.instance_id:
                 return
             
+            peer_id = packet.get("peer_id")
+            is_new_peer = peer_id not in self.nearby_peers
+            logger.info(
+                "[DISCOVERY] Discovery from %s",
+                packet.get("username"),
+            )
+            self.update_peer_registry(packet,address,)
+            callback = self.on_peer_found
+
+            if callback is not None:
+                try:
+                    callback(packet, address)
+
+                except Exception as exc:
+                    logger.exception(
+                        "[DISCOVERY] on_peer_found raised: %s",
+                        exc
+                    )
             self._send_response(address)
 
         elif packet_type == DISCOVERY_RESPONSE:
+            logger.info(
+                "[DISCOVERY] Peer discovered: %s",
+                packet.get("username"),
+            )
             self.update_peer_registry(packet, address)
 
             if self.on_peer_found is not None:
