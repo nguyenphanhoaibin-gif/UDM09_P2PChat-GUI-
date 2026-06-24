@@ -19,6 +19,7 @@ _TRUST_FG = {
     TrustState.BLOCKED: T.TRUST_BLOCKED,
 }
 _STATUS_ICON = {"online": "●", "connected": "●", "offline": "○"}
+from gui.transfer_panel import TransferPanel
 
 
 class MainWindow(ctk.CTkFrame):
@@ -144,6 +145,12 @@ class MainWindow(ctk.CTkFrame):
             on_connect=on_connect, on_disconnect=on_disconnect)
         self.details_panel.grid(row=0, column=2, sticky="nsew")
 
+        self.transfer_panel = TransferPanel(
+            right_sidebar,
+            controller=None
+        )
+        self.transfer_panel.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 10))
+
     def _build_statusbar(self) -> None:
         self.status_bar = StatusBar(self)
         self.status_bar.grid(row=1, column=0, columnspan=3, sticky="ew")
@@ -240,3 +247,9 @@ class MainWindow(ctk.CTkFrame):
     def set_block_callback(self, cb) -> None:
         """Compat shim."""
         self.details_panel.set_block_callback(cb)
+
+    def show_trust_dialog(self, mode: str, peer_info: dict, callback: Callable) -> None:
+        """Display a security verification popup"""
+        from gui.trust_dialog import TrustDialog
+        TrustDialog(self.master, mode=mode, peer_info=peer_info, callback=callback)
+
