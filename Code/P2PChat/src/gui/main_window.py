@@ -8,6 +8,7 @@ from gui.chatbox import ChatBox
 from gui.sidebar import Sidebar
 from gui.peer_details import PeerDetails
 from gui.statusbar import StatusBar
+from gui.transfer_panel import TransferPanel
 
 
 class MainWindow(ctk.CTkFrame):
@@ -120,12 +121,22 @@ class MainWindow(ctk.CTkFrame):
         self.broadcast_button.grid(row=0, column=2, padx=(0, 8), pady=8)
 
     def _build_peer_details(self, on_trust, on_block) -> None:
+        right_sidebar = ctk.CTkFrame(self, fg_color="transparent")
+        right_sidebar.grid(row=0, column=2, sticky="nsew", padx=(4, 10), pady=10)
+        right_sidebar.grid_rowconfigure(0, weight=1) 
+        right_sidebar.grid_rowconfigure(1, weight=0) 
         self.details_panel = PeerDetails(
             self,
             on_trust = on_trust,
             on_block = on_block,
         )
         self.details_panel.grid(row=0, column=2, sticky="nsew", padx=(4, 10), pady=10)
+
+        self.transfer_panel = TransferPanel(
+            right_sidebar,
+            controller=None
+        )
+        self.transfer_panel.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 10))
 
     def _build_statusbar(self) -> None:
         self.status_bar = StatusBar(self)
@@ -208,6 +219,19 @@ class MainWindow(ctk.CTkFrame):
         )
 
     # ------------------------------------------------------------------ #
+    # Transfer Panel API                                                   #
+    # ------------------------------------------------------------------ #
+
+    def on_transfer_started(self, tid: str, filename: str, peer: str, direction: str) -> None:
+        self.transfer_panel.add_transfer(tid, filename, peer, direction)
+
+    def on_transfer_progress(self, tid: str, progress: float) -> None:
+        self.transfer_panel.update_transfer(tid, progress)
+
+    def on_transfer_complete(self, tid: str) -> None:
+        self.transfer_panel.remove_transfer(tid)
+
+    # ------------------------------------------------------------------ #
     # Status / stats API                                                   #
     # ------------------------------------------------------------------ #
 
@@ -229,3 +253,9 @@ class MainWindow(ctk.CTkFrame):
 
     def set_block_callback(self, cb) -> None:
         self.details_panel.set_block_callback(cb)
+
+    def show_trust_dialog(self, mode: str, peer_info: dict, callback: Callable) -> None:
+        """Display a security verification popup"""
+        from gui.trust_dialog import TrustDialog
+        TrustDialog(self.master, mode=mode, peer_info=peer_info, callback=callback)
+
