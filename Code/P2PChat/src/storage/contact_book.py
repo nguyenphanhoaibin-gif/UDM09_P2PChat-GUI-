@@ -72,16 +72,7 @@ class ContactBook:
         fingerprint: str
     ):
         """Add or update contact."""
-
-        self.contacts[peer_id] = {
-            "peer_id": peer_id,
-            "alias": alias,
-            "trust_state": trust_state,
-            "fingerprint": fingerprint
-        }
-
-        self.save_contacts()
-
+        
     def remove_contact(
         self,
         peer_id: str
@@ -121,6 +112,7 @@ class ContactBook:
         trust_state: str | None = None,
         fingerprint: str | None = None
     ):
+    
         """Update existing contact."""
 
         contact = self.contacts.get(
@@ -140,3 +132,51 @@ class ContactBook:
             contact["fingerprint"] = fingerprint
 
         self.save_contacts()
+    def update_last_seen(
+        self,
+        peer_id: str,
+        timestamp: str
+   ):
+        """Update last seen."""
+
+        contact = self.contacts.get(
+        peer_id
+     )
+
+        if not contact:
+         return
+
+        contact["last_seen"] = timestamp
+
+        self.save_contacts()
+    def search(
+        self,
+        query: str
+   ):
+        """Search contacts."""
+
+        query = query.lower()
+
+        results = []
+
+        for contact in self.contacts.values():
+
+         alias = contact.get(
+            "alias",
+            ""
+        ).lower()
+
+        peer_id = contact.get(
+            "peer_id",
+            ""
+        ).lower()
+
+        if (
+            query in alias
+            or query in peer_id
+        ):
+            results.append(
+                contact
+            )
+
+        return results
