@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import threading
 from typing import Callable, Optional, Tuple
 
@@ -24,30 +25,37 @@ class ChatController:
 
     def __init__(
         self,
-        on_system:          Callable[[str], None],
-        on_message:         Callable[[str, str], None],
-        on_connected:       Callable[[str], None],
-        on_disconnect:      Callable[[str], None],
-        on_peers_update:    Callable[[], None],
+        on_system: Callable[[str], None],
+        on_message: Callable[[str, str, str], None],
+        on_connected: Callable[[str, str], None],
+        on_disconnect: Callable[[str], None],
+        on_peers_update: Callable[[], None],
         on_peer_discovered: Optional[Callable[[str, dict], None]] = None,
     ) -> None:
-        self.on_system          = on_system
-        self.on_message         = on_message
-        self.on_connected       = on_connected
-        self.on_disconnect      = on_disconnect
-        self.on_peers_update    = on_peers_update
+        """Initialise the controller with GUI callback references.
+        Args:
+            on_system: Called with a system/status string for the chat box.
+            on_message: Called with (peer_id, sender, payload) on incoming messages.
+            on_connected: Called with (peer_id, tcp_addr) when a session becomes active.
+            on_disconnect: Called with tcp_addr when a peer disconnects.
+            on_peers_update: Called (no args) whenever the peer list changes.
+            on_peer_discovered: Called with (peer_id, info) on discovery events.
+        """
+        self.on_system = on_system
+        self.on_message = on_message
+        self.on_connected = on_connected
+        self.on_disconnect = on_disconnect
+        self.on_peers_update = on_peers_update
         self.on_peer_discovered = on_peer_discovered
 
         self.node: Optional[P2PNode] = None
 
-        # Storage
         self.contact_book    = ContactBook()
         self.message_history = MessageHistory()
 
-        # Mapping peer_id → tcp_address for routing send_message
-        self._peer_to_tcp:  dict[str, str] = {}
-        # Mapping tcp_address → peer_id
-        self._tcp_to_peer:  dict[str, str] = {}
+        # Bidirectional mapping between peer_id and tcp_address.
+        self._peer_to_tcp: dict[str, str] = {}
+        self._tcp_to_peer: dict[str, str] = {}
         self._map_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
@@ -55,7 +63,15 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def start_node(self, host: str, port: int, username: str) -> Tuple[bool, str]:
-        """Start the P2PNode. Returns (success, message)."""
+        """Start the P2PNode and bind to *host*:*port*.
+        Args:
+            host: Bind address (e.g. "0.0.0.0").
+            port: TCP listen port.
+            username: Display name broadcast to other peers.
+
+        Returns:
+            (True, info_message) on success, (False, error_message) otherwise.
+        """
         if self.node is not None:
             return False, "Node already started."
 
@@ -84,6 +100,7 @@ class ChatController:
         )
 
     def stop(self) -> None:
+        """Stop the node and release all resources."""
         if self.node is not None:
             self.node.stop_server()
             self.node = None
@@ -93,27 +110,31 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, ip: str, port: int) -> bool:
-        """Connect to peer at ip:port. Returns success flag."""
+        """Initiate a TCP connection to *ip*:*port*.
+        Args:
+            ip: Target peer IP address.
+            port: Target peer TCP port.
+        Returns:
+            True if the connection was initiated, False otherwise.
+        """
         if self.node is None:
             self.on_system("Start the node first.")
             return False
 
-        # Prevent self-connect
-        if (
-            ip in ("127.0.0.1", "localhost")
-            and port == self.node.port
-        ):
-            self.on_system(
-                "Cannot connect to yourself."
-            )
+        if ip in ("127.0.0.1", "localhost") and port == self.node.port:
+            self.on_system("Cannot connect to yourself.")
             return False
 
-        return self.node.connect_to_peer(ip,port)
+        return self.node.connect_to_peer(ip, port)
 
     def send_message(self, payload: str, peer_id: str) -> bool:
-        """Send message to *peer_id*.
-
-        Translates peer_id → tcp_address before forwarding to node.
+        """Send *payload* to the peer identified by *peer_id*.
+        Translates peer_id → tcp_address before forwarding to the node.
+        Args:
+            payload: Plaintext message body.
+            peer_id: SHA-256 peer identifier.
+        Returns:
+            True if the message was sent successfully.
         """
         if self.node is None:
             self.on_system("Start the node first.")
@@ -129,27 +150,49 @@ class ChatController:
         if ok:
             try:
                 self.message_history.append_message(peer_id, {
-                    "message_id": "",
+                    "message_id": f"sent-{time.time_ns()}",
                     "peer_id":    peer_id,
                     "direction":  "sent",
                     "content":    payload,
-                    "timestamp":  __import__("time").time(),
+                    "timestamp":  time.time(),
                 })
-            except Exception:
-                pass
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.warning("Failed to persist sent message for %s", peer_id[:12])
         return ok
 
     def broadcast_message(self, payload: str) -> Tuple[int, int]:
+        """Send *payload* to all active peers.
+        Args:
+            payload: Plaintext message body.
+        Returns:
+            (sent_count, failed_count) tuple.
+        """
         if self.node is None:
             self.on_system("Start the node first.")
             return 0, 0
         return self.node.broadcast_message(payload)
 
+    def disconnect_peer(self, peer_id: str) -> bool:
+        """Close the active session with *peer_id*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        Returns:
+            True if a session was found and closed.
+        """
+        if self.node is None:
+            return False
+        return self.node.disconnect_peer(peer_id)
+
     def discover_peers(self) -> None:
+        """Trigger an immediate UDP discovery broadcast."""
         if self.node is not None:
             self.node.discover_peers()
 
     def get_discovered_peers(self) -> dict[str, dict]:
+        """Return a snapshot of all currently discovered peers.
+        Returns:
+            Dict mapping peer_id → peer info dict.
+        """
         if self.node is not None:
             return self.node.get_discovered_peers()
         return {}
@@ -159,55 +202,109 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def get_local_peer_id(self) -> str:
+        """Return this node's SHA-256 peer ID, or empty string if not started."""
         if self.node is None:
             return ""
         return self.node.identity_manager.get_peer_id()
 
     def get_local_fingerprint(self) -> str:
+        """Return this node's fingerprint, or empty string if not started."""
         if self.node is None:
             return ""
         return self.node.identity_manager.get_fingerprint()
 
     def get_trust_state(self, peer_id: str) -> str:
+        """Return the current TOFU trust state for *peer_id*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        Returns:
+            One of the TrustState constants.
+        """
         if self.node is None:
             return TrustState.NEW
         return self.node.get_trust_state(peer_id)
 
     def trust_peer(self, peer_id: str) -> None:
+        """Mark *peer_id* as TRUSTED in the trust store.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        """
         if self.node is not None:
             ok = self.node.trust_peer(peer_id)
             if not ok:
                 self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
 
     def block_peer(self, peer_id: str) -> None:
+        """Mark *peer_id* as BLOCKED and disconnect any active session.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        """
         if self.node is not None:
             ok = self.node.block_peer(peer_id)
             if not ok:
                 self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
 
+    def unblock_peer(self, peer_id: str) -> None:
+        """Remove BLOCKED state from *peer_id* (restore to TRUSTED).
+        Args:
+            peer_id: SHA-256 peer identifier.
+        """
+        if self.node is not None:
+            ok = self.node.unblock_peer(peer_id)
+            if not ok:
+                self.on_system(f"Peer {peer_id[:8]}… not found in trust store.")
+
     def get_peer_info(self, peer_id: str) -> Optional[dict]:
+        """Return the peer info dict for *peer_id*, or None if unknown.
+        Args:
+            peer_id: SHA-256 peer identifier.
+
+        Returns:
+            Peer info dict or None.
+        """
         return self.get_discovered_peers().get(peer_id)
 
     # ------------------------------------------------------------------ #
-    # Address translation helpers                                         #
+    # Address translation helpers                                          #
     # ------------------------------------------------------------------ #
 
     def register_peer_tcp(self, peer_id: str, tcp_addr: str) -> None:
-        """Register the peer_id → tcp_address mapping."""
+        """Register a bidirectional peer_id ↔ tcp_address mapping.
+        Args:
+            peer_id: SHA-256 peer identifier.
+            tcp_addr: "IP:PORT" TCP address string.
+        """
         with self._map_lock:
-            self._peer_to_tcp[peer_id] = tcp_addr
+            self._peer_to_tcp[peer_id]  = tcp_addr
             self._tcp_to_peer[tcp_addr] = peer_id
 
     def _peer_id_to_tcp(self, peer_id: str) -> Optional[str]:
-        """Return tcp_address for peer_id, or None."""
+        """Resolve peer_id to the active TCP session address.
+        Resolution order:
+        1. Explicit mapping registered at handshake time.
+        2. Search node.peers for an active session with the peer's IP
+           (bridges discovery listen-port vs OS-assigned ephemeral port).
+        3. Discovery tcp_address as last resort (initiator side only).
+        """
         with self._map_lock:
             tcp = self._peer_to_tcp.get(peer_id)
         if tcp:
             return tcp
-        # Fallback: look in discovered_peers which carries tcp_address
-        peers = self.get_discovered_peers()
-        info  = peers.get(peer_id)
+
+        if self.node is None:
+            return None
+
+        # Discovery stores the listen port; the actual connection may use
+        # an ephemeral port on the remote side (when we are the acceptor).
+        info = self.get_discovered_peers().get(peer_id)
         if info:
+            ip = info.get("ip")
+            if ip:
+                # Search all active sessions for this IP.
+                active = self.node.get_active_session_for_ip(ip)
+                if active:
+                    self.register_peer_tcp(peer_id, active)
+                    return active
             return info.get("tcp_address")
         return None
 
@@ -220,30 +317,31 @@ class ChatController:
     # ------------------------------------------------------------------ #
 
     def _safe_fire(self, cb: Optional[Callable], *args) -> None:
+        """Call *cb* with *args*, swallowing and logging any exceptions."""
         if cb is None:
             return
         try:
             cb(*args)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Controller callback raised an exception")
 
-    def _on_message(self, sender: str, payload: str) -> None:
-        self._safe_fire(self.on_message, sender, payload)
+    def _on_message(self, peer_id: str, sender: str, payload: str) -> None:
+        """Forward an inbound message (routed by peer_id) to the app callback.
+        Args:
+            peer_id: SHA-256 identifier of the sending peer (for routing).
+            sender: Display username of the sender.
+            payload: Decrypted plaintext message body.
+        """
+        self._safe_fire(self.on_message, peer_id, sender, payload)
 
-    def _on_connected(self, tcp_addr: str) -> None:
-        """node fires connected with tcp_addr; translate to peer_id for GUI."""
-        # Register mapping if we can find the peer_id from discovered_peers
-        peer_id = self._tcp_to_peer_id(tcp_addr)
-        if peer_id is None:
-            # Try to find from discovered_peers by tcp_address
-            for pid, info in self.get_discovered_peers().items():
-                if info.get("tcp_address") == tcp_addr:
-                    peer_id = pid
-                    self.register_peer_tcp(pid, tcp_addr)
-                    break
-
-        display = peer_id[:12] + "…" if peer_id else tcp_addr
-        self._safe_fire(self.on_connected,display)
+    def _on_connected(self, peer_id: str, tcp_addr: str) -> None:
+        """Node fires on_connected with (peer_id, tcp_addr); register mapping and notify GUI.
+        The node now provides peer_id directly, eliminating the need for the
+        brittle reverse-lookup that used to fail when ephemeral ports were involved.
+        """
+        if peer_id and tcp_addr:
+            self.register_peer_tcp(peer_id, tcp_addr)
+        self._safe_fire(self.on_connected, peer_id, tcp_addr)
         self._safe_fire(self.on_peers_update)
 
     def _on_disconnect(self, tcp_addr: str) -> None:
@@ -255,12 +353,7 @@ class ChatController:
         self._safe_fire(self.on_peers_update)
 
     def _on_peer_discovered(self, peer_id: str, info: dict) -> None:
-        # Keep tcp mapping fresh whenever we get a discovery update
-        print(
-            "[CTRL] peer discovered:",
-            peer_id,
-            info.get("username"),
-        )
+        logger.debug("[CTRL] peer discovered: %s (%s)", peer_id[:12], info.get("username"))
         tcp_addr = info.get("tcp_address")
         if tcp_addr:
             self.register_peer_tcp(peer_id, tcp_addr)

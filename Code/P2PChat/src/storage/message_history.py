@@ -1,123 +1,81 @@
-"""Chat history persistence."""
+"""Per-peer chat history persistence."""
 
 from pathlib import Path
 from typing import Any
 
 from storage.storage_manager import StorageManager
 
+
 class MessageHistory:
-    """
-    Per-peer message history.
-
-    data/storage/chat_history/
-
-    peer_id.json
-    """
-
-    def __init__(self):
-
-        self.base_dir = Path(
-            "data/storage/chat_history"
-        )
-
-        StorageManager.ensure_dir(
-            self.base_dir
-        )
-
-    # --------------------------------
-    # FREEZE API
-    # --------------------------------
-
-    def load_history(
-        self,
-        peer_id: str
-    ) -> list[dict[str, Any]]:
-
-        file_path = (
-            self.base_dir /
-            f"{peer_id}.json"
-        )
-
-        history = StorageManager.load_json(
-            file_path,
-            []
-        )
-        if not isinstance(
-            history,
-            list
-        ):
-            return []
-
-        return history
-
-    def save_history(
-        self,
-        peer_id: str,
-        records: list[dict[str, Any]]
-    ):
-
-        file_path = (
-            self.base_dir /
-            f"{peer_id}.json"
-        )
-
-        StorageManager.save_json(
-            file_path,
-            records
-        )
-
-    def append_message(
-        self,
-        peer_id: str,
-        record: dict[str, Any]
-    ):
-        """
-        Append one message.
-        record format:
+    """Persistent per-peer message log.
+    Each peer gets its own JSON file under data/storage/chat_history/
+    named <peer_id>.json.  Records follow the HistoryRecord DTO::
         {
             "message_id": "...",
-            "peer_id": "...",
-            "direction": "sent",
-            "content": "...",
-            "timestamp": 123456
+            "peer_id":    "...",
+            "direction":  "sent" | "received",
+            "content":    "...",
+            "timestamp":  1234567890.0
         }
+    """
+
+    def __init__(self) -> None:
+        """Initialise and ensure the history directory exists."""
+        self.base_dir = Path("data/storage/chat_history")
+        StorageManager.ensure_dir(self.base_dir)
+
+    # ------------------------------------------------------------------ #
+    # CRUD                                                                 #
+    # ------------------------------------------------------------------ #
+
+    def load_history(self, peer_id: str) -> list[dict[str, Any]]:
+        """Load and return all history records for *peer_id*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        Returns:
+            List of HistoryRecord dicts, oldest first.  Empty list if no
+            history exists or the file is unreadable.
         """
+        file_path = self.base_dir / f"{peer_id}.json"
+        history = StorageManager.load_json(file_path, [])
+        if not isinstance(history, list):
+            return []
+        return history
 
-        history = self.load_history(
-            peer_id
-        )
+    def save_history(self, peer_id: str, records: list[dict[str, Any]]) -> None:
+        """Overwrite the history file for *peer_id* with *records*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+            records: Complete list of HistoryRecord dicts to persist.
+        """
+        file_path = self.base_dir / f"{peer_id}.json"
+        StorageManager.save_json(file_path, records)
 
-        history.append(
-            record
-        )
+    def append_message(self, peer_id: str, record: dict[str, Any]) -> None:
+        """Append one message record and persist atomically.
+        Args:
+            peer_id: SHA-256 peer identifier.
+            record: HistoryRecord dict to append.
+        Note:
+            This loads the entire file on every call (O(n) read).  Acceptable
+            for the expected message volumes in a course-project context.
+        """
+        history = self.load_history(peer_id)
+        history.append(record)
+        self.save_history(peer_id, history)
 
-        self.save_history(
-            peer_id,
-            history
-        )
-     
-    def clear_history(
-        self,
-        peer_id: str
-    ):
-        """Delete all history for one peer."""
-
-        file_path = (
-            self.base_dir /
-            f"{peer_id}.json"
-        )
-
+    def clear_history(self, peer_id: str) -> None:
+        """Delete all history for *peer_id*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        """
+        file_path = self.base_dir / f"{peer_id}.json"
         if file_path.exists():
             file_path.unlink()
 
-    def get_message_count(
-        self,
-        peer_id: str
-    ) -> int:
-        """Return message count."""
-
-        history = self.load_history(
-            peer_id
-        )
-
-        return len(history)
+    def get_message_count(self, peer_id: str) -> int:
+        """Return the number of stored messages for *peer_id*.
+        Args:
+            peer_id: SHA-256 peer identifier.
+        """
+        return len(self.load_history(peer_id))

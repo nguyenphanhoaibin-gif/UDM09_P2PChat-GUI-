@@ -1,68 +1,76 @@
-"""Telegram-style chat bubble with sender name and timestamp."""
+"""Chat bubbles — Telegram/Zalo-style message rendering."""
 from __future__ import annotations
 
 from datetime import datetime
 import customtkinter as ctk
+from gui import theme as T
 
 
-def add_chat_bubble(
-    parent,
-    message: str,
-    sender:  str  = "me",
-    is_me:   bool = False,
-) -> None:
-    """Append a chat bubble to *parent* (a CTkScrollableFrame)."""
+def _now() -> str:
+    return datetime.now().strftime("%H:%M")
 
-    ts = datetime.now().strftime("%H:%M")
+
+# Max bubble width as fraction of chat area — bubbles never fill full width
+_WRAP = 360
+
+
+def add_chat_bubble(parent, message: str, sender: str = "me",
+                    is_me: bool = False) -> None:
+    """Append one message bubble to *parent* (a CTkScrollableFrame).
+    Layout mirrors Telegram:
+    - Sent  : right-aligned, blue, no sender name, double-tick
+    - Received: left-aligned, dark, sender name in accent colour
+    Both sides have consistent 8px vertical spacing and a timestamp footer.
+    """
+    ts = _now()
 
     outer = ctk.CTkFrame(parent, fg_color="transparent")
-    outer.pack(fill="x", padx=10, pady=3)
+    outer.pack(fill="x", padx=16, pady=(3, 3))
 
     if is_me:
-        bubble = ctk.CTkFrame(outer, fg_color="#1d4ed8", corner_radius=18)
-        bubble.pack(anchor="e", padx=(80, 0))
+        # ── Sent bubble (right) ───────────────────────────────────
+        bubble = ctk.CTkFrame(
+            outer, fg_color=T.BG_BUBBLE_ME, corner_radius=18,
+            # Flat bottom-right corner like Telegram
+        )
+        bubble.pack(anchor="e")
 
         ctk.CTkLabel(
-            bubble,
-            text=message,
-            justify="left",
-            wraplength=420,
-            text_color="#f0f9ff",
-            font=("Arial", 13),
-        ).pack(padx=14, pady=(8, 2))
+            bubble, text=message,
+            justify="left", wraplength=_WRAP,
+            text_color="#dbeafe", font=("Segoe UI", 13),
+        ).pack(anchor="w", padx=(14, 14), pady=(10, 2))
 
+        # Footer row: spacer + timestamp + ticks
+        foot = ctk.CTkFrame(bubble, fg_color="transparent")
+        foot.pack(fill="x", padx=(14, 10), pady=(0, 8))
         ctk.CTkLabel(
-            bubble,
-            text=f"You  {ts}",
-            text_color="#93c5fd",
-            font=("Consolas", 9),
-            anchor="e",
-        ).pack(anchor="e", padx=14, pady=(0, 6))
+            foot, text=f"{ts}  ✓✓",
+            text_color="#93c5fd", font=("Segoe UI", 9),
+        ).pack(side="right")
 
     else:
-        bubble = ctk.CTkFrame(outer, fg_color="#313244", corner_radius=18)
-        bubble.pack(anchor="w", padx=(0, 80))
+        # ── Received bubble (left) ────────────────────────────────
+        bubble = ctk.CTkFrame(
+            outer, fg_color=T.BG_BUBBLE_IN, corner_radius=18,
+        )
+        bubble.pack(anchor="w")
 
+        # Sender name
         ctk.CTkLabel(
-            bubble,
-            text=sender,
-            text_color="#89b4fa",
-            font=("Arial", 10, "bold"),
-            anchor="w",
-        ).pack(anchor="w", padx=14, pady=(8, 0))
+            bubble, text=sender, anchor="w",
+            text_color=T.TEXT_LINK, font=("Segoe UI", 10, "bold"),
+        ).pack(anchor="w", padx=14, pady=(10, 0))
 
+        # Message text
         ctk.CTkLabel(
-            bubble,
-            text=message,
-            justify="left",
-            wraplength=420,
-            font=("Arial", 13),
-        ).pack(padx=14, pady=(2, 2))
+            bubble, text=message,
+            justify="left", wraplength=_WRAP,
+            text_color=T.TEXT_PRI, font=("Segoe UI", 13),
+        ).pack(anchor="w", padx=14, pady=(2, 2))
 
+        # Timestamp footer
         ctk.CTkLabel(
-            bubble,
-            text=ts,
-            text_color="#6c7086",
-            font=("Consolas", 9),
-            anchor="e",
-        ).pack(anchor="e", padx=14, pady=(0, 6))
+            bubble, text=ts,
+            text_color=T.TEXT_TIME, font=("Segoe UI", 9),
+        ).pack(anchor="e", padx=12, pady=(0, 8))

@@ -149,6 +149,7 @@ def test_on_message():
     controller = create_controller()
 
     controller._on_message(
+        "peer_abc",
         "Tai",
         "Hello"
     )
@@ -157,6 +158,7 @@ def test_on_message():
         MagicMock,
         controller.on_message
     ).assert_called_once_with(
+        "peer_abc",
         "Tai",
         "Hello"
     )
@@ -167,14 +169,16 @@ def test_on_connected():
     controller = create_controller()
 
     controller._on_connected(
-        "peer1"
+        "peer_abc",
+        "172.19.64.1:100"
     )
 
     cast(
         MagicMock,
         controller.on_connected
     ).assert_called_once_with(
-        "peer1"
+        "peer_abc",
+        "172.19.64.1:100"
     )
 
     cast(

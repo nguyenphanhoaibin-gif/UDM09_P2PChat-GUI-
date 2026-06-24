@@ -1,100 +1,163 @@
-"""Sidebar: peer list with connect button and manual IP/port entry."""
+"""Sidebar: peer list, search, and manual-connect panel."""
 from __future__ import annotations
 
+import time
 from typing import Callable, Optional
 import customtkinter as ctk
 
+from gui import theme as T
 from trust.trust_state import TrustState
 
-TRUST_COLORS = {
-    TrustState.NEW:      "#f9e2af",
-    TrustState.TRUSTED:  "#89b4fa",
-    TrustState.VERIFIED: "#a6e3a1",
-    TrustState.MISMATCH: "#f38ba8",
-    TrustState.BLOCKED:  "#6c7086",
-}
 
-STATUS_ICONS = {
-    "online":     "🟢",
-    "connected":  "🔗",
-    "offline":    "⚪",
-    "connecting": "🟡",
-}
+def _time_ago(ts: float) -> str:
+    """Return a human-readable elapsed-time string for *ts*.
+    Args:
+        ts: Unix timestamp of the last-seen moment.
+    Returns:
+        Short relative string such as "Just now", "5m ago", "2h ago".
+    """
+    diff = time.time() - ts
+    if diff < 5:
+        return "Just now"
+    if diff < 60:
+        return f"{int(diff)}s ago"
+    if diff < 3600:
+        return f"{int(diff // 60)}m ago"
+    if diff < 86400:
+        return f"{int(diff // 3600)}h ago"
+    return f"{int(diff // 86400)}d ago"
 
 
 class PeerCard(ctk.CTkFrame):
-    """One row in the peer list."""
+    """One peer row — uses pack layout to avoid column-width conflicts."""
 
-    def __init__(
-        self,
-        master,
-        peer_id:   str,
-        peer_info: dict,
-        on_select:  Optional[Callable] = None,
-        on_connect: Optional[Callable] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            master, corner_radius=12,
-            fg_color="#313244", height=80, **kwargs
-        )
-
-        self.peer_id   = peer_id
-        self.peer_info = peer_info
+    def __init__(self, master, peer_id: str, peer_info: dict,
+                 on_select=None, on_connect=None, **kw) -> None:
+        super().__init__(master, corner_radius=12,
+                         fg_color=T.BG_CARD, height=76, **kw)
+        self.peer_id     = peer_id
+        self.peer_info   = peer_info
         self._on_select  = on_select
         self._on_connect = on_connect
+        self._selected   = False
+        self.pack_propagate(False)
+        self._build()
+        self.bind("<Enter>", lambda _e: self._hover(True))
+        self.bind("<Leave>", lambda _e: self._hover(False))
 
+    # ------------------------------------------------------------------ #
+
+    def _build(self) -> None:
+        """Build card with grid + fixed column minsizes — clean, no clipping."""
+        for w in self.winfo_children():
+            w.destroy()
+
+        info      = self.peer_info
+        username  = info.get("username") or "Unknown"
+        status    = info.get("status", "offline")
+        trust     = info.get("trust_state", TrustState.NEW)
+        connected = bool(info.get("connected"))
+        ip        = info.get("ip", "")
+        port      = str(info.get("port", ""))
+        last_seen = float(info.get("last_seen") or 0)
+        unread    = int(info.get("unread") or 0)
+
+        dot_col  = T.STATUS_DOT.get("connected" if connected else status,
+                                    T.STATUS_DOT["offline"])
+        av_col   = T.avatar_color(username)
+        trust_fg = T.TRUST_FG.get(trust, T.TEXT_MUTED)
+        trust_bg = T.TRUST_BG.get(trust, T.BG_CARD)
+
+        # Three columns: avatar (fixed) | text (flex) | right (fixed)
+        self.grid_columnconfigure(0, minsize=54, weight=0)
         self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(2, minsize=64, weight=0)
+        self.grid_rowconfigure(0, weight=1)
 
-        username    = peer_info.get("username", "Unknown")
-        status      = peer_info.get("status", "offline")
-        trust_state = peer_info.get("trust_state", TrustState.NEW)
-        connected   = peer_info.get("connected", False)
-        ip          = peer_info.get("ip", "")
-        port        = peer_info.get("port", "")
+        # ── Avatar column ─────────────────────────────────────────────
+        av_cell = ctk.CTkFrame(self, fg_color="transparent", width=54, height=56)
+        av_cell.grid(row=0, column=0, sticky="nsew", pady=10)
+        av_cell.grid_propagate(False)
 
-        icon        = STATUS_ICONS.get(status, "⚪")
-        trust_color = TRUST_COLORS.get(trust_state, "#a6adc8")
+        av = ctk.CTkFrame(av_cell, width=44, height=44, corner_radius=22, fg_color=av_col)
+        av.place(relx=0.5, rely=0.5, anchor="center")
+        av.pack_propagate(False)
+        ctk.CTkLabel(av, text=username[0].upper(),
+                     font=("Segoe UI", 16, "bold"), text_color="#fff",
+                     ).place(relx=0.5, rely=0.5, anchor="center")
 
-        # Avatar
-        ctk.CTkLabel(
-            self, text="👤", font=("Segoe UI Emoji", 20),
-        ).grid(row=0, column=0, rowspan=3, padx=(10, 6), pady=8)
+        dot = ctk.CTkFrame(av_cell, width=13, height=13, corner_radius=7,
+                           fg_color=dot_col, border_width=2, border_color=T.BG_CARD)
+        dot.place(relx=0.5, rely=0.5, x=14, y=14, anchor="center")
 
-        # Username
-        self.username_label = ctk.CTkLabel(
-            self, text=f"{icon} {username}",
-            anchor="w", font=("Arial", 13, "bold"),
-        )
-        self.username_label.grid(row=0, column=1, sticky="w", pady=(8, 0))
+        # ── Text column ───────────────────────────────────────────────
+        txt = ctk.CTkFrame(self, fg_color="transparent")
+        txt.grid(row=0, column=1, sticky="nsew", pady=10, padx=(2, 2))
+        txt.grid_columnconfigure(0, weight=1)
 
-        # Trust badge + IP
-        self.trust_label = ctk.CTkLabel(
-            self,
-            text=f"🔑 {trust_state}  ·  {ip}:{port}",
-            text_color=trust_color,
-            anchor="w", font=("Consolas", 9),
-        )
-        self.trust_label.grid(row=1, column=1, sticky="w")
+        ctk.CTkLabel(txt, text=username, anchor="w",
+                     font=("Segoe UI", 13, "bold"), text_color=T.TEXT_PRI,
+                     ).grid(row=0, column=0, sticky="ew")
 
-        # Connect / Connected button
-        btn_text  = "🔗 Connected" if connected else "Connect"
-        btn_color = "#45475a" if connected else "#89b4fa"
-        btn_hover = "#585b70" if connected else "#74c7ec"
+        sub = f"{ip}:{port}" if ip and port else (
+            _time_ago(last_seen) if last_seen else "")
+        ctk.CTkLabel(txt, text=sub, anchor="w",
+                     font=("Consolas", 9), text_color=T.TEXT_MUTED,
+                     ).grid(row=1, column=0, sticky="ew")
 
-        self._connect_btn = ctk.CTkButton(
-            self, text=btn_text,
-            width=90, height=26,
-            fg_color=btn_color, hover_color=btn_hover,
-            font=("Arial", 11),
-            command=self._do_connect,
-            state="disabled" if connected else "normal",
-        )
-        self._connect_btn.grid(row=2, column=1, sticky="w", pady=(2, 8))
+        badge = ctk.CTkFrame(txt, corner_radius=5, fg_color=trust_bg)
+        badge.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        ctk.CTkLabel(badge, text=trust,
+                     font=("Segoe UI", 9, "bold"), text_color=trust_fg,
+                     ).pack(padx=7, pady=2)
 
-        # Click anywhere on card → select
-        for widget in (self, self._connect_btn):
-            widget.bind("<Button-1>", self._do_select)
+        # ── Right column ──────────────────────────────────────────────
+        rgt = ctk.CTkFrame(self, fg_color="transparent", width=64)
+        rgt.grid(row=0, column=2, sticky="nsew", pady=10, padx=(0, 10))
+        rgt.grid_propagate(False)
+        rgt.grid_columnconfigure(0, weight=1)
+
+        ts_str = _time_ago(last_seen) if last_seen else ""
+        ctk.CTkLabel(rgt, text=ts_str, anchor="e",
+                     font=("Segoe UI", 8), text_color=T.TEXT_TIME,
+                     ).grid(row=0, column=0, sticky="ew")
+
+        if unread > 0:
+            # Unread pill — blue, like Telegram
+            pill = ctk.CTkFrame(rgt, width=22, height=22, corner_radius=11,
+                                fg_color=T.ACCENT)
+            pill.grid(row=1, column=0, sticky="e", pady=(4, 0))
+            pill.grid_propagate(False)
+            ctk.CTkLabel(pill, text=str(unread) if unread < 10 else "9+",
+                         font=("Segoe UI", 9, "bold"), text_color="#fff",
+                         ).place(relx=0.5, rely=0.5, anchor="center")
+        elif connected:
+            ctk.CTkLabel(rgt, text="● live", anchor="e",
+                         font=("Segoe UI", 9, "bold"), text_color=T.ACCENT,
+                         ).grid(row=1, column=0, sticky="e", pady=(4, 0))
+        else:
+            ctk.CTkButton(
+                rgt, text="Connect", width=60, height=24, corner_radius=12,
+                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
+                text_color=T.TEXT_LINK, font=("Segoe UI", 10),
+                command=self._do_connect,
+            ).grid(row=1, column=0, sticky="e", pady=(4, 0))
+
+        # Propagate click & hover to all children
+        for w in self.winfo_children():
+            self._bind_click(w)
+        self.bind("<Button-1>", self._do_select)
+
+    def _bind_click(self, widget) -> None:
+        widget.bind("<Button-1>", self._do_select)
+        widget.bind("<Enter>", lambda _e: self._hover(True))
+        widget.bind("<Leave>", lambda _e: self._hover(False))
+        for child in widget.winfo_children():
+            self._bind_click(child)
+
+    def _hover(self, on: bool) -> None:
+        if not self._selected:
+            self.configure(fg_color=T.BG_CARD_HOV if on else T.BG_CARD)
 
     def _do_select(self, _e=None) -> None:
         if self._on_select:
@@ -104,243 +167,193 @@ class PeerCard(ctk.CTkFrame):
         if self._on_connect:
             self._on_connect(self.peer_id, self.peer_info)
 
-    def set_selected(self, selected: bool) -> None:
-        self.configure(fg_color="#45475a" if selected else "#313244")
-        
-    def update_info(self, peer_info: dict):
+    def set_selected(self, sel: bool) -> None:
+        """Highlight or un-highlight."""
+        self._selected = sel
+        self.configure(fg_color=T.BG_CARD_SEL if sel else T.BG_CARD)
+
+    def update_info(self, peer_info: dict) -> None:
+        """Refresh contents in-place."""
         self.peer_info = peer_info
-        username = peer_info.get(
-            "username",
-            "Unknown"
-        )
-        status = peer_info.get(
-            "status",
-            "offline"
-        )
-        trust_state = peer_info.get(
-            "trust_state",
-            TrustState.NEW
-        )
-        trust_color = TRUST_COLORS.get(
-            trust_state,
-            "#a6adc8"
-        )
-        ip = peer_info.get(
-            "ip",
-            ""
-        )
-        port = peer_info.get(
-            "port",
-            ""
-        )
-        icon = STATUS_ICONS.get(
-            status,
-            "⚪"
-        )
-        self.username_label.configure(
-            text=f"{icon} {username}"
-        )
-        self.trust_label.configure(
-            text=f"🔑 {trust_state} · {ip}:{port}",
-            text_color=trust_color
-        )
-        connected = peer_info.get(
-            "connected",
-            False
-        )
-        btn_text = (
-            "🔗 Connected"
-            if connected
-            else "Connect"
-        )
-        btn_color = (
-            "#45475a"
-            if connected
-            else "#89b4fa"
-        )
-        btn_hover = (
-            "#585b70"
-            if connected
-            else "#74c7ec"
-        )
-        self._connect_btn.configure(
-            text=btn_text,
-            fg_color=btn_color,
-            hover_color=btn_hover,
-            state="disabled" if connected else "normal",
-        )
+        self._build()
+        if self._selected:
+            self.configure(fg_color=T.BG_CARD_SEL)
+
 
 class Sidebar(ctk.CTkFrame):
-    """Left sidebar: title, search, peer cards, manual connect form."""
+    """Left sidebar: PEERS header, search, scrollable card list, manual-connect."""
 
-    def __init__(
-        self,
-        master,
-        on_peer_select:    Optional[Callable] = None,
-        on_peer_connect:   Optional[Callable] = None,
-        on_manual_connect: Optional[Callable] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(master, fg_color="#181825", width=290, **kwargs)
+    def __init__(self, master,
+                 on_peer_select: Optional[Callable] = None,
+                 on_peer_connect: Optional[Callable] = None,
+                 on_manual_connect: Optional[Callable] = None, **kw) -> None:
+        super().__init__(master, fg_color=T.BG_SIDEBAR, width=300, **kw)
         self.grid_propagate(False)
-
         self._on_peer_select    = on_peer_select
         self._on_peer_connect   = on_peer_connect
         self._on_manual_connect = on_manual_connect
-        self.selected_peer_id   = None
-        self.peer_cards:        dict[str, PeerCard] = {}
-
-        self._build_ui()
+        self.selected_peer_id: Optional[str]  = None
+        self.peer_cards: dict[str, PeerCard]  = {}
+        self._all_peers: dict[str, dict]      = {}
+        self._manual_visible                  = False
+        self._build()
 
     # ------------------------------------------------------------------ #
-    # Construction                                                         #
-    # ------------------------------------------------------------------ #
 
-    def _build_ui(self) -> None:
-        # Title
-        ctk.CTkLabel(
-            self, text="Peers", font=("Arial", 18, "bold"),
-        ).pack(anchor="w", padx=14, pady=(14, 4))
+    def _build(self) -> None:
+        # ── Header ───────────────────────────────────────────────────
+        hdr = ctk.CTkFrame(self, fg_color="transparent")
+        hdr.pack(fill="x", padx=14, pady=(16, 6))
+        ctk.CTkLabel(hdr, text="PEERS",
+                     font=("Segoe UI", 10, "bold"),
+                     text_color=T.TEXT_MUTED).pack(side="left")
+        self._count_lbl = ctk.CTkLabel(hdr, text="",
+                                       font=("Segoe UI", 9),
+                                       text_color=T.TEXT_MUTED)
+        self._count_lbl.pack(side="right")
 
-        # Search
+        # ── Search ───────────────────────────────────────────────────
+        sf = ctk.CTkFrame(self, fg_color=T.BG_HEADER, corner_radius=10)
+        sf.pack(fill="x", padx=12, pady=(0, 6))
+        ctk.CTkLabel(sf, text="🔍", font=("Segoe UI", 11),
+                     text_color=T.TEXT_MUTED).pack(side="left", padx=(10, 0))
         self._search_var = ctk.StringVar()
         self._search_var.trace_add("write", lambda *_: self._apply_filter())
         ctk.CTkEntry(
-            self, textvariable=self._search_var,
-            placeholder_text="Search peers…", height=32,
-        ).pack(fill="x", padx=10, pady=(0, 6))
+            sf, textvariable=self._search_var,
+            placeholder_text="Search peers…",
+            placeholder_text_color=T.TEXT_MUTED,
+            fg_color="transparent", border_width=0,
+            text_color=T.TEXT_PRI, font=("Segoe UI", 12), height=34,
+        ).pack(side="left", fill="x", expand=True, padx=6)
 
-        # Peer scroll area
-        self._scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
-        self._scroll.pack(fill="both", expand=True, padx=4, pady=4)
+        # ── Peer list ─────────────────────────────────────────────────
+        self._scroll = ctk.CTkScrollableFrame(
+            self, fg_color="transparent",
+            scrollbar_button_color=T.BORDER,
+            scrollbar_button_hover_color=T.BORDER_LIGHT)
+        self._scroll.pack(fill="both", expand=True, padx=6, pady=2)
 
-        # Separator
-        ctk.CTkFrame(self, height=1, fg_color="#313244").pack(fill="x", padx=10)
+        # ── Separator + bottom ────────────────────────────────────────
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER).pack(fill="x", padx=10)
 
-        # Manual connect section
-        self._build_manual_connect()
+        bot = ctk.CTkFrame(self, fg_color="transparent")
+        bot.pack(fill="x", padx=12, pady=(6, 10))
 
-        # Footer
-        self._footer = ctk.CTkLabel(
-            self, text="No peer selected",
-            text_color="#6c7086", font=("Consolas", 10),
-        )
-        self._footer.pack(pady=(4, 8))
+        ctk.CTkButton(
+            bot, text="＋   Add / Discover Peer",
+            height=36, corner_radius=10,
+            fg_color=T.BG_HEADER, hover_color=T.BG_FIELD,
+            text_color=T.ACCENT, font=("Segoe UI", 12),
+            command=self._toggle_manual,
+        ).pack(fill="x")
 
-    def _build_manual_connect(self) -> None:
-        frame = ctk.CTkFrame(self, fg_color="transparent")
-        frame.pack(fill="x", padx=10, pady=(6, 2))
-
-        ctk.CTkLabel(
-            frame, text="Manual Connect",
-            font=("Arial", 11, "bold"), anchor="w",
-        ).pack(anchor="w")
-
-        row = ctk.CTkFrame(frame, fg_color="transparent")
-        row.pack(fill="x", pady=(2, 0))
-        row.grid_columnconfigure(0, weight=2)
-        row.grid_columnconfigure(1, weight=1)
+        # Manual connect (hidden)
+        self._manual_frame = ctk.CTkFrame(bot, fg_color=T.BG_HEADER, corner_radius=10)
+        r = ctk.CTkFrame(self._manual_frame, fg_color="transparent")
+        r.pack(fill="x", padx=8, pady=(8, 4))
+        r.grid_columnconfigure(0, weight=2)
+        r.grid_columnconfigure(1, weight=1)
 
         self._ip_entry = ctk.CTkEntry(
-            row, placeholder_text="IP address", height=30, font=("Consolas", 11),
-        )
+            r, placeholder_text="IP address", height=32,
+            font=("Consolas", 11), fg_color=T.BG_FIELD,
+            border_color=T.BORDER, text_color=T.TEXT_PRI)
         self._ip_entry.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
         self._port_entry = ctk.CTkEntry(
-            row, placeholder_text="Port", height=30,
-            font=("Consolas", 11), width=70,
-        )
+            r, placeholder_text="Port", width=74, height=32,
+            font=("Consolas", 11), fg_color=T.BG_FIELD,
+            border_color=T.BORDER, text_color=T.TEXT_PRI)
         self._port_entry.grid(row=0, column=1, sticky="ew")
 
+        self._ip_entry.bind("<Return>", lambda _: self._port_entry.focus_set())
+        self._port_entry.bind("<Return>", lambda _: self._do_manual_connect())
+
         ctk.CTkButton(
-            frame, text="Connect", height=30,
+            self._manual_frame, text="Connect",
+            height=32, corner_radius=8,
+            fg_color=T.ACCENT, hover_color=T.ACCENT_HOV,
+            font=("Segoe UI", 12, "bold"),
             command=self._do_manual_connect,
-        ).pack(fill="x", pady=(4, 0))
+        ).pack(fill="x", padx=8, pady=(0, 8))
 
     # ------------------------------------------------------------------ #
-    # Public API                                                           #
+    # Public                                                               #
     # ------------------------------------------------------------------ #
 
-    def update_peers(self, peers: dict):
-        existing = set(self.peer_cards.keys())
-        current = set(peers.keys())
-        removed = existing - current
-        for peer_id in removed:
-            self.peer_cards[peer_id].destroy()
-            del self.peer_cards[peer_id]
+    def update_peers(self, peers: dict) -> None:
+        """Incremental peer list update — avoids full rebuild on heartbeat."""
+        prev = set(self._all_peers)
         self._all_peers = peers
-        for peer_id, peer_info in peers.items():
-            if peer_id in self.peer_cards:
-                self.peer_cards[peer_id].update_info(peer_info)
+        curr = set(peers)
 
-            else:
-                card = PeerCard(
-                    self._scroll,
-                    peer_id,
-                    peer_info,
-                    on_select=self._select_peer,
-                    on_connect=self._connect_peer,
-                )
-                card.pack(
-                    fill="x",
-                    padx=4,
-                    pady=3
-                )
-                self.peer_cards[peer_id] = card
+        for pid in prev - curr:
+            if pid in self.peer_cards:
+                self.peer_cards[pid].destroy()
+                del self.peer_cards[pid]
+
+        if prev != curr:
+            self._apply_filter()
+        else:
+            for pid, info in peers.items():
+                if pid in self.peer_cards:
+                    self.peer_cards[pid].update_info(info)
+
+        online = sum(1 for i in peers.values() if i.get("status") != "offline")
+        self._count_lbl.configure(
+            text=f"{online}/{len(peers)}" if peers else "")
+
+    # ------------------------------------------------------------------ #
+    # Internal                                                             #
+    # ------------------------------------------------------------------ #
 
     def _apply_filter(self) -> None:
-        query = getattr(self, "_search_var", None)
-        q     = query.get().lower().strip() if query else ""
-        peers = getattr(self, "_all_peers", {})
-
-        for widget in self._scroll.winfo_children():
-            widget.destroy()
-        self.peer_cards.clear()
-
+        q = self._search_var.get().lower().strip()
         filtered = {
-            pid: info for pid, info in peers.items()
+            pid: info for pid, info in self._all_peers.items()
             if not q
-            or q in info.get("username", "").lower()
-            or q in info.get("ip", "")
+            or q in (info.get("username") or "").lower()
+            or q in (info.get("ip") or "")
         }
+
+        for w in self._scroll.winfo_children():
+            w.destroy()
+        self.peer_cards.clear()
 
         if not filtered:
             ctk.CTkLabel(
                 self._scroll,
-                text="No peers found" if q else "No peers discovered",
-                text_color="#6c7086",
-            ).pack(pady=20)
+                text="No peers discovered" if not q else "No match",
+                text_color=T.TEXT_MUTED, font=("Segoe UI", 12),
+            ).pack(pady=40)
             return
 
-        # Sort: connected first, then online, then offline
-        def _sort_key(item):
-            info = item[1]
-            order = {"connected": 0, "online": 1, "offline": 2}
-            return order.get(info.get("status", "offline"), 2)
+        def _key(item):
+            s = item[1].get("status", "offline")
+            c = item[1].get("connected", False)
+            return 0 if (c or s == "connected") else (1 if s == "online" else 2)
 
-        for peer_id, peer_info in sorted(filtered.items(), key=_sort_key):
-            card = PeerCard(
-                self._scroll,
-                peer_id,
-                peer_info,
-                on_select  = self._select_peer,
-                on_connect = self._connect_peer,
-            )
+        for pid, info in sorted(filtered.items(), key=_key):
+            card = PeerCard(self._scroll, pid, info,
+                            on_select=self._select_peer,
+                            on_connect=self._connect_peer)
             card.pack(fill="x", padx=4, pady=3)
-            if peer_id == self.selected_peer_id:
-                card.set_selected(True)
-            self.peer_cards[peer_id] = card
+            card.set_selected(pid == self.selected_peer_id)
+            self.peer_cards[pid] = card
 
-    # ------------------------------------------------------------------ #
-    # Internal actions                                                     #
-    # ------------------------------------------------------------------ #
+    def _toggle_manual(self) -> None:
+        self._manual_visible = not self._manual_visible
+        if self._manual_visible:
+            self._manual_frame.pack(fill="x", pady=(6, 0))
+            self._ip_entry.focus_set()
+        else:
+            self._manual_frame.pack_forget()
 
     def _select_peer(self, peer_id: str, peer_info: dict) -> None:
         self.selected_peer_id = peer_id
         for pid, card in self.peer_cards.items():
             card.set_selected(pid == peer_id)
-        uname = peer_info.get("username", peer_id[:8])
-        self._footer.configure(text=f"Selected: {uname}")
         if self._on_peer_select:
             self._on_peer_select(peer_id, peer_info)
 
@@ -349,7 +362,11 @@ class Sidebar(ctk.CTkFrame):
             self._on_peer_connect(peer_id, peer_info)
 
     def _do_manual_connect(self) -> None:
-        ip       = self._ip_entry.get().strip()
-        port_str = self._port_entry.get().strip()
+        ip  = self._ip_entry.get().strip()
+        p   = self._port_entry.get().strip()
         if self._on_manual_connect:
-            self._on_manual_connect(ip, port_str)
+            self._on_manual_connect(ip, p)
+        self._ip_entry.delete(0, "end")
+        self._port_entry.delete(0, "end")
+        if self._manual_visible:
+            self._toggle_manual()

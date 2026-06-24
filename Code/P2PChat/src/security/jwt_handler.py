@@ -1,54 +1,51 @@
 """JWT identity token for P2PChat."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import jwt
 
 from config import JWT_EXPIRE_HOURS
 
+
 class JWTHandler:
-        
+    """Creates and verifies RS256-signed identity tokens for peer discovery."""
+
     @staticmethod
     def create_identity_token(
         peer_id: str,
         username: str,
         fingerprint: str,
-        private_key_pem: str
+        private_key_pem: str,
     ) -> str:
+        """Create a signed RS256 identity token.
+        Args:
+            peer_id: SHA-256 hash of the public key.
+            username: Human-readable display name.
+            fingerprint: Colon-separated hex fingerprint of the public key.
+            private_key_pem: PEM-encoded RSA private key for signing.
+        Returns:
+            Signed JWT string.
         """
-        Create signed identity token.
-        Used by Discovery and Handshake.
-        """
+        now = datetime.now(timezone.utc)
         payload = {
-            "peer_id": peer_id,
-            "username": username,
+            "peer_id":     peer_id,
+            "username":    username,
             "fingerprint": fingerprint,
-            "iat": datetime.utcnow(),
-            "exp": datetime.utcnow() + timedelta(hours=12)
+            "iat":         now,
+            "exp":         now + timedelta(hours=JWT_EXPIRE_HOURS),
         }
-
-        return jwt.encode(
-            payload,
-            private_key_pem,
-            algorithm="RS256"
-        )
-
+        return jwt.encode(payload, private_key_pem, algorithm="RS256")
 
     @staticmethod
-    def verify_identity_token(
-        token: str,
-        public_key_pem: str
-    ) -> dict | None:
+    def verify_identity_token(token: str, public_key_pem: str) -> dict | None:
+        """Verify a signed RS256 identity token.
+        Args:
+            token: JWT string to verify.
+            public_key_pem: PEM-encoded RSA public key of the signer.
+        Returns:
+            Decoded claims dict, or None if verification fails.
         """
-        Verify signed identity token.
-        """
-
         try:
-            return jwt.decode(
-                token,
-                public_key_pem,
-                algorithms=["RS256"]
-            )
-
+            return jwt.decode(token, public_key_pem, algorithms=["RS256"])
         except jwt.InvalidTokenError:
             return None

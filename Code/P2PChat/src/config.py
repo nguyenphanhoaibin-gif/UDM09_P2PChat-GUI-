@@ -15,7 +15,7 @@ MAX_PACKET_SIZE = 65536
 SOCKET_TIMEOUT = 1
 
 # =========================
-# Discovery 
+# Discovery
 # =========================
 
 PRESENCE_INTERVAL = 5

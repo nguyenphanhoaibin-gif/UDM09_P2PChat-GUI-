@@ -1,200 +1,233 @@
-"""PeerDetails: right panel showing selected peer's info, fingerprint, and trust actions."""
+"""PeerDetails: right-hand panel — peer info, trust, and action buttons."""
 from __future__ import annotations
 
 from typing import Callable, Optional
 import customtkinter as ctk
-
+from gui import theme as T
 from trust.trust_state import TrustState
-
-TRUST_COLORS = {
-    TrustState.NEW:      "#f9e2af",
-    TrustState.TRUSTED:  "#89b4fa",
-    TrustState.VERIFIED: "#a6e3a1",
-    TrustState.MISMATCH: "#f38ba8",
-    TrustState.BLOCKED:  "#6c7086",
-}
-
-TRUST_ICONS = {
-    TrustState.NEW:      "🔑",
-    TrustState.TRUSTED:  "🔐",
-    TrustState.VERIFIED: "✅",
-    TrustState.MISMATCH: "⚠️",
-    TrustState.BLOCKED:  "⛔",
-}
 
 
 class PeerDetails(ctk.CTkFrame):
-    """Right-hand panel: peer metadata, fingerprint box, trust / block buttons."""
+    """Right panel: avatar, metadata rows, and action buttons."""
 
-    def __init__(
-        self,
-        master,
-        on_trust: Optional[Callable[[str], None]] = None,
-        on_block: Optional[Callable[[str], None]] = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(
-            master,
-            fg_color="#181825",
-            width=270,
-            corner_radius=14,
-            **kwargs,
-        )
+    def __init__(self, master,
+                 on_trust=None, on_block=None,
+                 on_connect=None, on_disconnect=None,
+                 on_add_contact=None, **kw) -> None:
+        super().__init__(master, fg_color=T.BG_DETAILS, width=272,
+                         corner_radius=0, **kw)
         self.grid_propagate(False)
-
-        self._on_trust  = on_trust
-        self._on_block  = on_block
-        self.current_peer_id: Optional[str] = None
-
-        self._build_ui()
+        self._on_trust       = on_trust
+        self._on_block       = on_block
+        self._on_connect     = on_connect
+        self._on_disconnect  = on_disconnect
+        self._on_add_contact = on_add_contact
+        self.current_peer_id:    Optional[str]  = None
+        self._current_peer_info: Optional[dict] = None
+        self._is_connected:      bool           = False
+        self._build()
 
     # ------------------------------------------------------------------ #
-    # Construction                                                         #
+    # Build                                                                #
     # ------------------------------------------------------------------ #
 
-    def _build_ui(self) -> None:
-        # Title
-        ctk.CTkLabel(
-            self, text="Peer Details",
-            font=("Arial", 17, "bold"),
-        ).pack(anchor="w", padx=14, pady=(14, 6))
+    def _build(self) -> None:
+        # Section label
+        ctk.CTkLabel(self, text="PEER DETAILS",
+                     font=("Segoe UI", 9, "bold"), text_color=T.TEXT_MUTED,
+                     anchor="w").pack(anchor="w", padx=16, pady=(16, 10))
 
-        # Avatar + username row
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=14, pady=(0, 8))
+        # ── Avatar card ──────────────────────────────────────────────
+        av_card = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=14)
+        av_card.pack(fill="x", padx=12, pady=(0, 8))
 
-        self._avatar = ctk.CTkLabel(
-            top, text="👤", font=("Segoe UI Emoji", 36),
-        )
-        self._avatar.pack(side="left", padx=(0, 10))
+        av_wrap = ctk.CTkFrame(av_card, fg_color="transparent")
+        av_wrap.pack(pady=(16, 6))
 
-        name_col = ctk.CTkFrame(top, fg_color="transparent")
-        name_col.pack(side="left", fill="x", expand=True)
+        self._av_ring = ctk.CTkFrame(av_wrap, width=64, height=64,
+                                     corner_radius=32, fg_color=T.ACCENT)
+        self._av_ring.pack()
+        self._av_ring.pack_propagate(False)
+        self._av_lbl = ctk.CTkLabel(self._av_ring, text="?",
+                                    font=("Segoe UI", 24, "bold"), text_color="#fff")
+        self._av_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
-        self._username_label = ctk.CTkLabel(
-            name_col, text="No peer selected",
-            font=("Arial", 14, "bold"), anchor="w",
-        )
-        self._username_label.pack(anchor="w")
+        self._name_lbl = ctk.CTkLabel(av_card, text="No peer selected",
+                                      font=("Segoe UI", 14, "bold"),
+                                      text_color=T.TEXT_PRI)
+        self._name_lbl.pack()
 
-        self._status_label = ctk.CTkLabel(
-            name_col, text="⚪ Offline",
-            text_color="#6c7086", font=("Consolas", 10), anchor="w",
-        )
-        self._status_label.pack(anchor="w")
+        self._status_lbl = ctk.CTkLabel(av_card, text="● Offline",
+                                        font=("Segoe UI", 10),
+                                        text_color=T.STATUS_DOT["offline"])
+        self._status_lbl.pack(pady=(2, 14))
 
-        # Separator
-        ctk.CTkFrame(self, height=1, fg_color="#313244").pack(fill="x", padx=10, pady=4)
+        # ── Info rows ────────────────────────────────────────────────
+        info_card = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=14)
+        info_card.pack(fill="x", padx=12, pady=(0, 8))
 
-        # Info grid
-        self._peer_id_label  = self._info_row("Peer ID",     "—")
-        self._ip_label       = self._info_row("Address",     "—")
-        self._trust_label    = self._info_row("Trust",       "NEW")
+        _, self._pid_val  = self._row(info_card, "Peer ID",     "—")
+        _, self._ip_val   = self._row(info_card, "IP",          "—")
+        _, self._port_val = self._row(info_card, "Port",        "—")
+        _, self._fp_val   = self._row(info_card, "Fingerprint", "—", mono=True, wrap=True)
+        self._trust_row, self._trust_val = self._row(info_card, "Trust", "NEW")
 
-        # Fingerprint
-        ctk.CTkLabel(
-            self, text="Fingerprint",
-            font=("Arial", 12, "bold"), anchor="w",
-        ).pack(fill="x", padx=14, pady=(10, 4))
+        # ── Action buttons ───────────────────────────────────────────
+        btn_card = ctk.CTkFrame(self, fg_color="transparent")
+        btn_card.pack(fill="x", padx=12, pady=(0, 12))
 
-        self._fp_box = ctk.CTkTextbox(
-            self, height=110,
-            font=("Consolas", 10),
-        )
-        self._fp_box.pack(fill="x", padx=14, pady=(0, 10))
-        self._fp_box.insert("1.0", "No peer selected.")
-        self._fp_box.configure(state="disabled")
+        self._connect_btn = self._btn(
+            btn_card, "⎋  Connect",
+            fg=T.ACCENT_DIM, hover=T.ACCENT, tc=T.TEXT_LINK,
+            cmd=self._do_connect)
 
-        # Buttons
-        self._trust_btn = ctk.CTkButton(
-            self, text="✅  Trust Peer",
-            fg_color="#1e6f40", hover_color="#165c34",
-            command=self._do_trust,
-        )
-        self._trust_btn.pack(fill="x", padx=14, pady=(0, 6))
+        self._trust_btn = self._btn(
+            btn_card, "✓  Trust / Verify",
+            fg="#0a1f16", hover="#065f46", tc=T.SUCCESS,
+            cmd=self._do_trust)
 
-        self._block_btn = ctk.CTkButton(
-            self, text="⛔  Block Peer",
-            fg_color="#7f1d1d", hover_color="#6b1a1a",
-            command=self._do_block,
-        )
-        self._block_btn.pack(fill="x", padx=14, pady=(0, 14))
+        self._contact_btn = self._btn(
+            btn_card, "＋  Add Contact",
+            fg=T.BG_FIELD, hover=T.BG_CARD, tc=T.TEXT_SEC,
+            cmd=self._do_add_contact)
 
-    def _info_row(self, label: str, value: str) -> ctk.CTkLabel:
-        row = ctk.CTkFrame(self, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=2)
+        self._block_btn = self._btn(
+            btn_card, "⊘  Block Peer",
+            fg=T.DANGER_DIM, hover="#7f1d1d", tc=T.DANGER,
+            cmd=self._do_block)
+
+    @staticmethod
+    def _btn(parent, label, fg, hover, tc, cmd) -> ctk.CTkButton:
+        b = ctk.CTkButton(parent, text=label, height=38, corner_radius=10,
+                          fg_color=fg, hover_color=hover, text_color=tc,
+                          font=("Segoe UI", 12, "bold"), command=cmd)
+        b.pack(fill="x", pady=(0, 5))
+        return b
+
+    def _row(self, parent, label: str, value: str,
+             mono: bool = False, wrap: bool = False) -> tuple:
+        """Create a label+value row. Always returns (row_frame, value_label)."""
+        row = ctk.CTkFrame(parent, fg_color=T.BG_FIELD, corner_radius=8)
+        row.pack(fill="x", padx=10, pady=2)
         row.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            row, text=f"{label}:",
-            font=("Arial", 11, "bold"),
-            anchor="w", width=72,
-        ).grid(row=0, column=0, sticky="w")
-
-        val_label = ctk.CTkLabel(
-            row, text=value,
-            font=("Consolas", 10),
-            anchor="w", text_color="#cdd6f4",
-        )
-        val_label.grid(row=0, column=1, sticky="w")
-        return val_label
+        ctk.CTkLabel(row, text=label, font=("Segoe UI", 9, "bold"),
+                     text_color=T.TEXT_SEC, anchor="w", width=88,
+                     ).grid(row=0, column=0, sticky="nw", padx=(10, 0), pady=8)
+        val = ctk.CTkLabel(row, text=value,
+                           font=("Consolas", 9) if mono else ("Segoe UI", 10),
+                           text_color=T.TEXT_PRI, anchor="w",
+                           wraplength=130 if wrap else 0, justify="left")
+        val.grid(row=0, column=1, sticky="w", padx=(4, 10), pady=8)
+        return row, val
 
     # ------------------------------------------------------------------ #
-    # Public API                                                           #
+    # Public                                                               #
     # ------------------------------------------------------------------ #
 
     def update_peer(self, peer_info: dict) -> None:
-        self.current_peer_id = peer_info.get("peer_id")
+        """Refresh all widgets from *peer_info*."""
+        self._current_peer_info = peer_info
+        self.current_peer_id    = peer_info.get("peer_id")
+        self._is_connected      = bool(peer_info.get("connected"))
 
-        username    = peer_info.get("username", "Unknown")
-        trust_state = peer_info.get("trust_state", TrustState.NEW)
-        status      = peer_info.get("status", "offline")
-        ip          = peer_info.get("ip", "—")
-        port        = peer_info.get("port", "")
-        fingerprint = peer_info.get("fingerprint", "No fingerprint available")
-        pid         = peer_info.get("peer_id", "—")
+        username  = peer_info.get("username") or "Unknown"
+        status    = peer_info.get("status", "offline")
+        connected = bool(peer_info.get("connected"))
+        trust     = peer_info.get("trust_state", TrustState.NEW)
+        ip        = peer_info.get("ip") or "—"
+        port      = str(peer_info.get("port") or "—")
+        fp        = peer_info.get("fingerprint") or "—"
+        pid       = peer_info.get("peer_id") or "—"
 
-        trust_color = TRUST_COLORS.get(trust_state, "#a6adc8")
-        trust_icon  = TRUST_ICONS.get(trust_state, "🔑")
-        status_icon = {"online": "🟢", "connected": "🔗", "offline": "⚪"}.get(status, "⚪")
+        av_col    = T.avatar_color(username)
+        dot_s     = "connected" if connected else status
+        dot_col   = T.STATUS_DOT.get(dot_s, T.STATUS_DOT["offline"])
+        trust_fg  = T.TRUST_FG.get(trust, T.TEXT_MUTED)
+        trust_bg  = T.TRUST_BG.get(trust, T.BG_FIELD)
+        status_str = "Connected" if connected else status.capitalize()
 
-        self._username_label.configure(text=username)
-        self._status_label.configure(text=f"{status_icon} {status.capitalize()}")
+        self._av_ring.configure(fg_color=av_col)
+        self._av_lbl.configure(text=username[0].upper())
+        self._name_lbl.configure(text=username)
+        self._status_lbl.configure(
+            text=f"● {status_str}", text_color=dot_col)
 
-        # Truncate peer_id for display
-        pid_display = (pid[:24] + "…") if len(pid) > 24 else pid
-        self._peer_id_label.configure(text=pid_display)
-        self._ip_label.configure(text=f"{ip}:{port}" if port else ip)
-        self._trust_label.configure(
-            text=f"{trust_icon} {trust_state}",
-            text_color=trust_color,
-        )
+        # Peer ID — truncated
+        pid_disp = f"{pid[:16]}…" if len(pid) > 18 else pid
+        self._pid_val.configure(text=pid_disp)
+        self._ip_val.configure(text=ip)
+        self._port_val.configure(text=port)
 
-        # Format fingerprint: one pair per group of 8, each line 4 groups
-        fp_formatted = self._format_fingerprint(fingerprint)
-        self._fp_box.configure(state="normal")
-        self._fp_box.delete("1.0", "end")
-        self._fp_box.insert("1.0", fp_formatted)
-        self._fp_box.configure(state="disabled")
+        # Fingerprint — wrap at 8 pairs
+        if ":" in fp:
+            parts = fp.split(":")
+            fp = "\n".join(":".join(parts[i:i+8]) for i in range(0, len(parts), 8))
+        self._fp_val.configure(text=fp)
 
-        # Button states
-        if trust_state == TrustState.BLOCKED:
-            self._trust_btn.configure(text="✅  Unblock Peer")
-            self._block_btn.configure(state="disabled")
+        # Trust row
+        self._trust_val.configure(text=trust, text_color=trust_fg)
+        self._trust_row.configure(fg_color=trust_bg)
+
+        # Connect button doubles as Disconnect when a session is active.
+        if connected:
+            self._connect_btn.configure(
+                text="⏹  Disconnect", state="normal",
+                fg_color="#3a1f2a", hover_color="#7f1d1d",
+                text_color="#fca5a5")
         else:
-            self._trust_btn.configure(text="✅  Trust Peer")
-            self._block_btn.configure(state="normal")
+            self._connect_btn.configure(
+                text="⎋  Connect", state="normal",
+                fg_color=T.ACCENT_DIM, hover_color=T.ACCENT,
+                text_color=T.TEXT_LINK)
 
-    # Compat shims (older app.py calls)
+        # Trust/Block button states — mutually exclusive actions
+        if trust == TrustState.BLOCKED:
+            # Peer is blocked: offer Unblock via the green button,
+            # disable Block (already blocked).
+            self._trust_btn.configure(
+                text="↩  Unblock Peer",
+                fg_color="#1a3030", text_color=T.SUCCESS)
+            self._block_btn.configure(
+                text="⊘  Blocked",
+                state="disabled", fg_color=T.BG_FIELD, text_color=T.TEXT_MUTED)
+        elif trust == TrustState.MISMATCH:
+            # Fingerprint changed — warn user prominently.
+            self._trust_btn.configure(
+                text="⚠  Accept New Key",
+                fg_color="#2d1a00", text_color=T.WARNING)
+            self._block_btn.configure(
+                text="⊘  Block Peer",
+                state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)
+        else:
+            self._trust_btn.configure(
+                text="✓  Trust / Verify",
+                fg_color="#0a1f16", text_color=T.SUCCESS)
+            self._block_btn.configure(
+                text="⊘  Block Peer",
+                state="normal", fg_color=T.DANGER_DIM, text_color=T.DANGER)
+
+    # Compat shims
     def set_trust_callback(self, cb: Callable) -> None:
+        """Set the trust callback (compat shim)."""
         self._on_trust = cb
 
     def set_block_callback(self, cb: Callable) -> None:
+        """Set the block callback (compat shim)."""
         self._on_block = cb
 
     # ------------------------------------------------------------------ #
-    # Internal                                                             #
+    # Actions                                                              #
     # ------------------------------------------------------------------ #
+
+    def _do_connect(self) -> None:
+        """Connect, or disconnect if a session is already active."""
+        if not self.current_peer_id:
+            return
+        if self._is_connected:
+            if self._on_disconnect:
+                self._on_disconnect(self.current_peer_id)
+        elif self._on_connect and self._current_peer_info:
+            self._on_connect(self.current_peer_id, self._current_peer_info)
 
     def _do_trust(self) -> None:
         if self.current_peer_id and self._on_trust:
@@ -204,11 +237,6 @@ class PeerDetails(ctk.CTkFrame):
         if self.current_peer_id and self._on_block:
             self._on_block(self.current_peer_id)
 
-    @staticmethod
-    def _format_fingerprint(fp: str) -> str:
-        """Split a long colon-separated fingerprint into 4-group lines."""
-        if not fp or ":" not in fp:
-            return fp or "—"
-        pairs  = fp.split(":")
-        groups = [":".join(pairs[i:i+8]) for i in range(0, len(pairs), 8)]
-        return "\n".join(groups)
+    def _do_add_contact(self) -> None:
+        if self.current_peer_id and self._on_add_contact:
+            self._on_add_contact(self.current_peer_id)
