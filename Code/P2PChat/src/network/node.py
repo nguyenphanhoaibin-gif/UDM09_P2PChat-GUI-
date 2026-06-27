@@ -1,5 +1,6 @@
-"""P2PNode: Manages TCP connections, peer state, and the custom message protocol."""
+"""P2PNode: TCP server, handshake, session management, and message routing."""
 
+import collections
 import logging
 import socket
 import threading
@@ -7,33 +8,44 @@ import time
 from cryptography.fernet import Fernet, InvalidToken
 
 from security.crypto import CryptoHandler
-from security.rsa_utils import RSAUtils
 from security.jwt_handler import JWTHandler
+from security.rsa_utils import RSAUtils
+from identity.identity_manager import IdentityManager
+from identity.peer_id import generate_peer_id
 from message.protocol import PacketType, ProtocolHandler
 from network.discovery import DiscoveryService, PEER_TIMEOUT
-from identity.identity_manager import IdentityManager
 from trust.tofu_engine import TOFUEngine
-from config import SOCKET_TIMEOUT
+from config import SOCKET_TIMEOUT, DEFAULT_LISTEN_PORT
 
 logger = logging.getLogger(__name__)
 
-HANDSHAKE_TIMEOUT = 5
-_AddressMap = dict[int, str]  # id(socket) -> "IP:PORT"
+HANDSHAKE_TIMEOUT = 10   # seconds before a pending handshake is dropped
+_RECV_TIMEOUT     = 30   # per-socket read timeout (catches stalled peers)
+_AddressMap       = dict[int, str]  # id(socket) -> "IP:PORT"
+_SEEN_MSG_MAX     = 4096  # max message IDs in the deque (FIFO eviction)
 
 
 class P2PNode:
-    """Manages TCP connections, peer state, and the custom message protocol.
-
-    Peer identity note
-    ------------------
-    * ``node.peers`` and ``node.peer_sessions`` are keyed by **"IP:PORT"** strings
-      (the TCP connection address).
-    * ``node.discovered_peers`` is keyed by the **peer_id SHA-256 hash** that comes
-      from the discovery JWT.
-    * Each entry in ``discovered_peers`` carries a ``"tcp_address"`` field that maps
-      back to the TCP key used by ``peers`` / ``peer_sessions``.
-    * The controller / GUI must use the ``tcp_address`` field when calling
-      ``send_message``; the ``peer_id`` hash is only for identity / trust purposes.
+    """TCP peer node: accepts/initiates connections, manages sessions, routes messages.
+    Keying convention
+    -----------------
+    * peers / peer_sessions: keyed by "IP:PORT" (the actual TCP address).
+    * discovered_peers: keyed by peer_id (SHA-256 of public key).
+    * A tcp_address field in each discovery entry bridges the two key spaces.
+      It is updated to the **live** (possibly ephemeral) address the moment a
+      session becomes active, so downstream lookups always match.
+    Session dict schema (created by _register_peer, extended by handshake handlers)
+    -----------------
+    {
+        "state":        "pending" | "active",
+        "peer_id":      str | None,       # set during handshake
+        "public_key":   str | None,       # remote PEM public key
+        "session_key":  bytes | None,     # raw Fernet key bytes
+        "crypto":       CryptoHandler | None,
+        "username":     str | None,
+        "listen_port":  int | None,
+        "is_initiator": bool,
+    }
     """
 
     def __init__(
@@ -46,36 +58,53 @@ class P2PNode:
         on_connected=None,
         on_peer_discovered=None,
     ) -> None:
-        self.host     = host
-        self.port     = port
+        """Initialise the node (does not bind or start threads yet).
+        Args:
+            host: Bind address ("0.0.0.0" for all interfaces).
+            port: TCP listen port.
+            username: Display name broadcast during discovery.
+            on_message: (peer_id, sender, payload) callback for inbound messages.
+            on_disconnect: (tcp_addr) callback when a peer disconnects.
+            on_connected: (peer_id, tcp_addr) callback when session is active.
+            on_peer_discovered: (peer_id, info) callback on discovery events.
+        """
+        self.host = host
+        self.port = port
         self.username = username
 
-        # GUI callbacks
-        self.on_message         = on_message
-        self.on_disconnect      = on_disconnect
-        self.on_connected       = on_connected
+        self.on_message = on_message
+        self.on_disconnect = on_disconnect
+        self.on_connected = on_connected
         self.on_peer_discovered = on_peer_discovered
 
         self.server_socket: socket.socket | None = None
 
-        # ── Connected-peer state (keyed by "IP:PORT") ──────────────────
+        # Active sessions, keyed by "IP:PORT" TCP address.
         self.peers_lock    = threading.RLock()
         self.peers:         dict[str, socket.socket] = {}
         self.peer_sessions: dict[str, dict]          = {}
         self._sock_to_addr: _AddressMap              = {}
 
-        # ── Protocol / crypto ──────────────────────────────────────────
         self.protocol_handler = ProtocolHandler()
-        self.identity_manager = IdentityManager()
+
+        # Identity — use a per-port profile so multiple local instances don't
+        # overwrite each other's key files.
+        profile = "identity" if port == DEFAULT_LISTEN_PORT else f"identity_{port}"
+        self.identity_manager = IdentityManager(profile=profile)
         self.identity_manager.load_identity()
         self.private_key = self.identity_manager.get_private_key()
         self.public_key  = self.identity_manager.get_public_key()
-        self.tofu        = TOFUEngine()
 
-        # Replay-attack mitigation
-        self.seen_messages: set[str] = set()
+        self.tofu = TOFUEngine()
 
-        # ── Discovery (keyed by peer_id SHA-256 hash) ──────────────────
+        # Replay-attack mitigation: FIFO deque of recently seen message IDs.
+        # Using collections.deque with a maxlen gives O(1) eviction of the
+        # oldest entry — no "random eviction" like the previous set approach.
+        self._seen_msg_deque: collections.deque = collections.deque(maxlen=_SEEN_MSG_MAX)
+        self._seen_msg_set:   set[str]          = set()
+        self._seen_lock = threading.Lock()
+
+        # Discovery registry, keyed by peer_id.
         self.discovery_lock    = threading.RLock()
         self.discovered_peers: dict[str, dict] = {}
 
@@ -89,13 +118,12 @@ class P2PNode:
         )
         self.discovery.on_peer_found = self._handle_discovered_peer
 
-        # ── Misc ───────────────────────────────────────────────────────
-        self.receive_threads: list[threading.Thread] = []
+        self.receive_threads:   list[threading.Thread]  = []
         self.expiration_thread: threading.Thread | None = None
         self.is_running = False
 
     # ------------------------------------------------------------------ #
-    # Server lifecycle                                                     #
+    # Lifecycle                                                            #
     # ------------------------------------------------------------------ #
 
     def start_server(self) -> None:
@@ -104,7 +132,7 @@ class P2PNode:
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.settimeout(SOCKET_TIMEOUT)
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen()
+        self.server_socket.listen(10)
         self.is_running = True
 
         self.discovery.start()
@@ -120,9 +148,11 @@ class P2PNode:
             daemon=True, name="AcceptThread",
         ).start()
 
-        logger.info("[NODE] Listening on %s:%d", self.host, self.port)
+        logger.info("[NODE] Listening on %s:%d as %s",
+                    self.host, self.port, self.identity_manager.get_peer_id()[:12])
 
     def stop_server(self) -> None:
+        """Stop accepting connections, close all sessions, and shut down discovery."""
         self.is_running = False
         self.discovery.stop()
 
@@ -152,22 +182,51 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def connect_to_peer(self, host: str, port: int) -> bool:
-        """Connect to another peer and initiate the handshake.
-
-        The TCP connection key is always "IP:PORT" (ephemeral port of the
-        *outgoing* socket → we remap after handshake to the peer's *listen* port).
+        """Initiate a TCP connection and handshake with *host*:*port*.
+        Includes two dedup checks to prevent double-connections.
+        Args:
+            host: Target peer IP.
+            port: Target peer listen port.
+        Returns:
+            True if a new connection was established.
         """
         tcp_addr = f"{host}:{port}"
 
+        # Dedup 1: exact address already connected.
         with self.peers_lock:
             if tcp_addr in self.peers:
+                logger.debug("[NODE] Already connected to %s", tcp_addr)
                 return False
+
+        # Dedup 2: active session with the same peer_id, regardless of port.
+        # We look up the peer_id from discovery first (by listen-port address),
+        # then scan ALL sessions for that peer_id directly.  This catches the case
+        # where the remote peer already connected TO US with an ephemeral port —
+        # discovered_peers["tcp_address"] would still hold the listen port, so
+        # a simple tcp_address == tcp_addr comparison would miss the existing session.
+        target_pid: str | None = None
+        with self.discovery_lock:
+            for pid, info in self.discovered_peers.items():
+                announced = f"{info.get('ip')}:{info.get('port')}"
+                if announced == tcp_addr:
+                    target_pid = pid
+                    break
+        if target_pid is not None:
+            with self.peers_lock:
+                for sess in self.peer_sessions.values():
+                    if (sess.get("peer_id") == target_pid
+                            and sess.get("state") == "active"):
+                        logger.info("[NODE] Active session already exists with %s",
+                                    target_pid[:12])
+                        return False
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(10)
+            sock.settimeout(10)            # TCP connect timeout
             sock.connect((host, port))
-            sock.settimeout(None)
+            # Keep a modest per-recv timeout so a stalled peer cannot block
+            # the receive thread indefinitely.
+            sock.settimeout(_RECV_TIMEOUT)
 
             if not self._register_peer(tcp_addr, sock, is_initiator=True):
                 sock.close()
@@ -186,7 +245,13 @@ class P2PNode:
             return False
 
     def send_message(self, message: str, tcp_addr: str) -> bool:
-        """Send an encrypted message to the peer at *tcp_addr* ("IP:PORT")."""
+        """Send an encrypted message to the peer at *tcp_addr*.
+        Args:
+            message: Plaintext body.
+            tcp_addr: "IP:PORT" session key.
+        Returns:
+            True if sent successfully.
+        """
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             sock    = self.peers.get(tcp_addr)
@@ -198,7 +263,7 @@ class P2PNode:
         crypto: CryptoHandler | None = session.get("crypto")
         try:
             packet = self.protocol_handler.create_packet(
-                PacketType.MESSAGE, self.username, message, crypto=crypto
+                PacketType.MESSAGE, self.username, message, crypto=crypto,
             )
             sock.sendall(self.protocol_handler.serialize(packet))
             return True
@@ -208,6 +273,12 @@ class P2PNode:
             return False
 
     def broadcast_message(self, message: str) -> tuple[int, int]:
+        """Send *message* to all active sessions.
+        Args:
+            message: Plaintext body.
+        Returns:
+            (sent_count, failed_count) tuple.
+        """
         with self.peers_lock:
             active = [a for a, s in self.peer_sessions.items() if s["state"] == "active"]
         sent = failed = 0
@@ -218,37 +289,83 @@ class P2PNode:
                 failed += 1
         return sent, failed
 
+    def disconnect_peer(self, peer_id: str) -> bool:
+        """Close the active session for *peer_id* (user-initiated).
+        Args:
+            peer_id: SHA-256 identifier.
+        Returns:
+            True if a session was found and closed.
+        """
+        with self.peers_lock:
+            target_sock = None
+            for addr, sess in self.peer_sessions.items():
+                if sess.get("peer_id") == peer_id:
+                    target_sock = self.peers.get(addr)
+                    break
+
+        if target_sock is None:
+            return False
+
+        logger.info("[NODE] Disconnecting %s (user request)", peer_id[:12])
+        self._remove_peer(target_sock)
+        return True
+
     def discover_peers(self) -> None:
+        """Trigger an immediate UDP broadcast."""
         self.discovery.discover()
 
     def get_discovered_peers(self) -> dict[str, dict]:
+        """Return a snapshot of all known peers.
+
+        Returns:
+            Dict mapping peer_id → info dict.
+        """
         with self.discovery_lock:
             return dict(self.discovered_peers)
 
+    def get_active_session_for_ip(self, ip: str) -> str | None:
+        """Find an active session key for *ip* (any port).
+        Bridges discovery listen-port → OS-assigned ephemeral port.
+        Args:
+            ip: Remote peer IP.
+        Returns:
+            "IP:port" key of an active session, or None.
+        """
+        with self.peers_lock:
+            for tcp_addr, sess in self.peer_sessions.items():
+                if tcp_addr.startswith(f"{ip}:") and sess.get("state") == "active":
+                    return tcp_addr
+        return None
+
     def get_trust_state(self, peer_id: str) -> str:
+        """Return the TOFU trust state for *peer_id*."""
         return self.tofu.get_trust_state(peer_id)
 
     def trust_peer(self, peer_id: str) -> bool:
+        """Mark *peer_id* as TRUSTED."""
         try:
-            self.tofu.trust_peer(peer_id)
-            return True
-        except Exception:
-            logger.exception(
-                "[NODE] Failed to trust peer %s",
-                peer_id,
-            )
+            return self.tofu.trust_peer(peer_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("[NODE] Failed to trust peer %s", peer_id[:12])
             return False
 
-
     def block_peer(self, peer_id: str) -> bool:
+        """Mark *peer_id* as BLOCKED and immediately disconnect their session."""
         try:
-            self.tofu.block_peer(peer_id)
-            return True
-        except Exception:
-            logger.exception(
-                "[NODE] Failed to block peer %s",
-                peer_id,
-            )
+            ok = self.tofu.block_peer(peer_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("[NODE] Failed to block peer %s", peer_id[:12])
+            return False
+        if ok:
+            self._disconnect_peer_id(peer_id)
+        return ok
+
+    def unblock_peer(self, peer_id: str) -> bool:
+        """Remove BLOCKED state from *peer_id*, restoring TRUSTED."""
+        try:
+            return self.tofu.unblock_peer(peer_id)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("[NODE] Failed to unblock peer %s", peer_id[:12])
             return False
 
     # ------------------------------------------------------------------ #
@@ -256,18 +373,31 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def _accept_connections(self) -> None:
+        """Accept incoming TCP connections in a dedicated daemon thread."""
         if self.server_socket is None:
             return
         while self.is_running:
             try:
                 client_socket, address = self.server_socket.accept()
                 tcp_addr = f"{address[0]}:{address[1]}"
-                logger.info("[NODE] Incoming: %s", tcp_addr)
+                logger.info("[NODE] Incoming connection from %s", tcp_addr)
+
+                # Pre-handshake IP-level BLOCKED check (fast path).
+                if self._is_ip_blocked(address[0]):
+                    logger.info("[NODE] Rejected blocked IP %s", address[0])
+                    client_socket.close()
+                    continue
+
+                # Apply the same recv timeout as outbound connections.
+                client_socket.settimeout(_RECV_TIMEOUT)
+
                 if not self._register_peer(tcp_addr, client_socket, is_initiator=False):
                     client_socket.close()
                     continue
+
                 self._start_receive_thread(tcp_addr, client_socket)
                 self._schedule_handshake_timeout(tcp_addr)
+
             except socket.timeout:
                 continue
             except OSError:
@@ -280,10 +410,12 @@ class P2PNode:
     # ------------------------------------------------------------------ #
 
     def _receive_messages(self, peer_socket: socket.socket) -> None:
+        """Read and dispatch packets from *peer_socket* (runs in its own thread)."""
         while self.is_running:
             try:
                 packet = self.protocol_handler.receive_packet(peer_socket)
                 if packet is None:
+                    # None means the connection closed cleanly or timed out.
                     self._remove_peer(peer_socket)
                     break
 
@@ -298,9 +430,15 @@ class P2PNode:
                 elif msg_type == PacketType.MESSAGE:
                     self._handle_message(packet, peer_socket)
                 else:
-                    logger.debug("[NODE] Unknown packet '%s'", msg_type)
+                    logger.debug("[NODE] Unknown packet type '%s'", msg_type)
 
             except (ConnectionResetError, BrokenPipeError):
+                self._remove_peer(peer_socket)
+                break
+            except socket.timeout:
+                # Peer did not send data within _RECV_TIMEOUT — treat as stall.
+                addr = self._get_tcp_addr(peer_socket)
+                logger.warning("[NODE] Receive timeout — dropping stalled peer %s", addr)
                 self._remove_peer(peer_socket)
                 break
             except (OSError, ValueError, KeyError, InvalidToken) as exc:
@@ -318,22 +456,32 @@ class P2PNode:
             self._remove_peer(peer_socket)
             return
 
-        tcp_addr = self._get_peer_id(peer_socket)
+        tcp_addr = self._get_tcp_addr(peer_socket)
         if tcp_addr is None:
             return
 
+        raw_pub_key = packet.get("public_key", "")
         try:
-            RSAUtils.load_public_key(packet["public_key"])
-        except Exception:
-            logger.warning("[NODE] Invalid public key — dropping")
+            RSAUtils.load_public_key(raw_pub_key)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("[NODE] Invalid public key in handshake — dropping %s", tcp_addr)
             self._remove_peer(peer_socket)
             return
 
+        # Derive peer_id now so we can check BLOCKED before replying.
+        incoming_peer_id = generate_peer_id(raw_pub_key)
+        if self.tofu.is_blocked(incoming_peer_id):
+            logger.info("[NODE] Handshake rejected — %s is BLOCKED", incoming_peer_id[:12])
+            self._remove_peer(peer_socket)
+            return
+
+        # Update the session in a single lock acquisition (atomic).
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             if session is None:
                 return
-            session["public_key"]  = packet["public_key"]
+            session["peer_id"]     = incoming_peer_id
+            session["public_key"]  = raw_pub_key
             session["username"]    = packet.get("username", "Unknown")
             session["listen_port"] = packet.get("listen_port")
 
@@ -353,33 +501,43 @@ class P2PNode:
             self._remove_peer(peer_socket)
             return
 
-        tcp_addr = self._get_peer_id(peer_socket)
+        tcp_addr = self._get_tcp_addr(peer_socket)
         if tcp_addr is None:
             return
 
         if packet.get("status") != "ok":
+            logger.warning("[NODE] Handshake ACK status not ok from %s", tcp_addr)
             self._remove_peer(peer_socket)
             return
 
         raw_key = packet.get("public_key", "")
         try:
             RSAUtils.load_public_key(raw_key)
-        except Exception:
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("[NODE] Invalid public key in ACK — dropping %s", tcp_addr)
             self._remove_peer(peer_socket)
             return
 
+        ack_peer_id = generate_peer_id(raw_key)
+        if self.tofu.is_blocked(ack_peer_id):
+            logger.info("[NODE] ACK rejected — %s is BLOCKED", ack_peer_id[:12])
+            self._remove_peer(peer_socket)
+            return
+
+        # Update session atomically in one lock acquisition.
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             if session is None:
                 return
+            session["peer_id"]    = ack_peer_id
             session["public_key"] = raw_key
-            is_initiator = session["is_initiator"]
+            is_initiator          = session["is_initiator"]
 
         if is_initiator:
             self._send_session_key(peer_socket, tcp_addr)
 
     def _handle_session_key(self, packet: dict, peer_socket: socket.socket) -> None:
-        tcp_addr = self._get_peer_id(peer_socket)
+        tcp_addr = self._get_tcp_addr(peer_socket)
         if tcp_addr is None:
             return
 
@@ -391,63 +549,121 @@ class P2PNode:
         try:
             fernet_key = RSAUtils.decrypt(self.private_key, bytes.fromhex(encrypted_key_hex))
             crypto     = CryptoHandler(key=fernet_key)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("[NODE] Session key decrypt failed from %s: %s", tcp_addr, exc)
             self._remove_peer(peer_socket)
             return
 
+        peer_id = ""
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             if session is None:
                 return
+            peer_id = session.get("peer_id", "")
+
+            # Guard against duplicate active sessions for the same peer_id.
+            # This can happen when both sides press Connect at the same time:
+            # both handshakes complete and both try to become "active".
+            # Close the older session before activating this one.
+            if peer_id:
+                for addr, existing_sess in list(self.peer_sessions.items()):
+                    if (addr != tcp_addr
+                            and existing_sess.get("peer_id") == peer_id
+                            and existing_sess.get("state") == "active"):
+                        logger.info(
+                            "[NODE] Duplicate session for %s — closing older %s",
+                            peer_id[:12], addr,
+                        )
+                        old_sock = self.peers.get(addr)
+                        if old_sock:
+                            # Schedule removal outside the lock to avoid deadlock.
+                            threading.Thread(
+                                target=self._remove_peer, args=(old_sock,),
+                                daemon=True, name="DupSessionCleanup",
+                            ).start()
+                        break
+
             session["crypto"] = crypto
             session["state"]  = "active"
 
-        logger.info("[NODE] Session active: %s", tcp_addr)
-        self._fire_callback(self.on_connected, tcp_addr)
+        self._sync_discovery_on_connect(peer_id, tcp_addr)
+        logger.info("[NODE] Session active: %s (peer: %s)",
+                    tcp_addr, peer_id[:12] if peer_id else "?")
+        self._fire_callback(self.on_connected, peer_id, tcp_addr)
 
     def _handle_message(self, packet: dict, peer_socket: socket.socket) -> None:
-        tcp_addr = self._get_peer_id(peer_socket)
+        tcp_addr = self._get_tcp_addr(peer_socket)
         if tcp_addr is None:
             return
 
+        # Snapshot all needed session fields in a single lock acquisition to
+        # avoid TOCTOU: another thread could change state between the check
+        # and the subsequent field reads.
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
-        if session is None or session["state"] != "active":
+            if session is None:
+                return
+            session_state  = session["state"]
+            sender_pid     = session.get("peer_id")
+            session_crypto = session.get("crypto")
+
+        if session_state != "active":
             return
+
         if not self.protocol_handler.validate_packet(packet):
             return
 
         message_id = packet["message_id"]
-        with self.peers_lock:
-            if message_id in self.seen_messages:
-                return
-            self.seen_messages.add(message_id)
-            if len(self.seen_messages) > 5000:
-                self.seen_messages.clear()
 
-        crypto = session.get("crypto")
-        try:
-            payload = self.protocol_handler.decrypt_payload(packet, crypto=crypto)
-        except (InvalidToken, ValueError) as exc:
-            logger.warning("[NODE] Decrypt failed: %s", exc)
+        # Replay-attack check using a bounded FIFO structure.
+        # deque(maxlen=N) automatically discards the oldest entry when full,
+        # so no explicit eviction code is needed — and eviction is truly FIFO.
+        with self._seen_lock:
+            if message_id in self._seen_msg_set:
+                logger.debug("[NODE] Duplicate message dropped: %s", message_id[:8])
+                return
+            # Capture the item about to be evicted (deque[0]) BEFORE appending,
+            # because after deque.append() when full, that item is already gone.
+            evicted: str | None = (
+                self._seen_msg_deque[0]
+                if len(self._seen_msg_deque) == _SEEN_MSG_MAX
+                else None
+            )
+            self._seen_msg_deque.append(message_id)
+            self._seen_msg_set.add(message_id)
+            if evicted is not None:
+                self._seen_msg_set.discard(evicted)
+
+        if sender_pid and self.tofu.is_blocked(sender_pid):
+            logger.debug("[NODE] Message dropped — %s is BLOCKED", sender_pid[:12])
             return
 
-        self._fire_callback(self.on_message, packet.get("sender", "Unknown"), payload)
+        try:
+            payload = self.protocol_handler.decrypt_payload(packet, crypto=session_crypto)
+        except (InvalidToken, ValueError) as exc:
+            logger.warning("[NODE] Decrypt failed from %s: %s", tcp_addr, exc)
+            return
+
+        self._fire_callback(
+            self.on_message,
+            sender_pid or "",
+            packet.get("sender", "Unknown"),
+            payload,
+        )
 
     # ------------------------------------------------------------------ #
-    # Discovery handlers                                                   #
+    # Discovery                                                            #
     # ------------------------------------------------------------------ #
 
     def _handle_discovered_peer(self, packet: dict, address: tuple[str, int]) -> None:
-        """Called by DiscoveryService when a valid discovery_response arrives."""
-        peer_ip  = address[0]
-        peer_id  = packet.get("peer_id")
-        token    = packet.get("identity_token")
-        pub_key  = packet.get("public_key")
+        """Called by DiscoveryService for every valid discovery/response packet."""
+        peer_ip = address[0]
+        peer_id = packet.get("peer_id")
+        token   = packet.get("identity_token")
+        pub_key = packet.get("public_key")
 
         if not token or not pub_key:
-            logger.warning("[DISCOVERY] Missing JWT identity")
+            logger.warning("[DISCOVERY] Missing JWT or public key from %s", peer_ip)
             return
 
         claims = JWTHandler.verify_identity_token(token, pub_key)
@@ -455,12 +671,12 @@ class P2PNode:
             logger.warning("[DISCOVERY] Invalid JWT from %s", peer_ip)
             return
 
-        # Cross-validate claims against packet fields
+        # Cross-check JWT claims against packet fields — prevents spoofing.
         if claims.get("fingerprint") != packet.get("fingerprint"):
-            logger.warning("[DISCOVERY] Fingerprint mismatch in JWT vs packet")
+            logger.warning("[DISCOVERY] Fingerprint mismatch JWT vs packet from %s", peer_ip)
             return
         if claims.get("peer_id") != peer_id:
-            logger.warning("[DISCOVERY] Peer ID mismatch in JWT vs packet")
+            logger.warning("[DISCOVERY] Peer ID mismatch JWT vs packet from %s", peer_ip)
             return
         if not peer_id:
             return
@@ -469,26 +685,31 @@ class P2PNode:
         if peer_port is None:
             return
 
-        # tcp_address is the key used in node.peers / peer_sessions
         tcp_address = f"{peer_ip}:{peer_port}"
-
         trust_state = self.tofu.verify_peer(peer_id, packet.get("fingerprint", ""))
-        now = time.time()
+        now         = time.time()
 
         with self.discovery_lock:
             existing = self.discovered_peers.get(peer_id)
 
             if existing is not None:
+                # Dirty-check — only notify GUI when something meaningful changed.
+                # Routine heartbeats (same fields) must NOT trigger UI redraws.
+                changed = (
+                    existing.get("status")       != "online"
+                    or existing.get("trust_state") != trust_state
+                    or existing.get("fingerprint") != packet.get("fingerprint")
+                    or existing.get("username")    != packet.get("username")
+                )
                 existing["last_seen"]   = now
                 existing["trust_state"] = trust_state
                 existing["fingerprint"] = packet.get("fingerprint")
-                existing["tcp_address"] = tcp_address
-
-                if existing["status"] != "online":
-                    existing["status"] = "online"
-                    self._fire_callback(self.on_peer_discovered, peer_id, dict(existing))
-                else:
-                    # Always refresh GUI so trust_state stays current
+                # Only update stored listen-port address if the session is NOT
+                # currently active (active sessions keep their ephemeral address).
+                if not existing.get("connected"):
+                    existing["tcp_address"] = tcp_address
+                existing["status"] = "online"
+                if changed:
                     self._fire_callback(self.on_peer_discovered, peer_id, dict(existing))
                 return
 
@@ -496,9 +717,9 @@ class P2PNode:
                 "username":    packet.get("username", "Unknown"),
                 "ip":          peer_ip,
                 "port":        peer_port,
-                "tcp_address": tcp_address,    # ← KEY FIX: for send_message routing
+                "tcp_address": tcp_address,
                 "status":      "online",
-                "connected":   tcp_address in self.peers,
+                "connected":   False,
                 "peer_id":     peer_id,
                 "last_seen":   now,
                 "fingerprint": packet.get("fingerprint"),
@@ -506,32 +727,68 @@ class P2PNode:
             }
             self.discovered_peers[peer_id] = info
 
+        if peer_id == self.identity_manager.get_peer_id():
+            logger.warning("[DISCOVERY] Peer %s has same identity — "
+                           "two instances sharing identity.json?", peer_id[:12])
+
         logger.info("[DISCOVERY] New peer: %s (%s)", peer_id[:12], info["username"])
         self._fire_callback(self.on_peer_discovered, peer_id, dict(info))
 
     def _cleanup_expired_peers(self) -> None:
+        """Mark peers offline when they stop broadcasting (runs every 5 s)."""
         while self.is_running:
             now = time.time()
             with self.discovery_lock:
                 for peer_id, peer in list(self.discovered_peers.items()):
-                    if peer["status"] == "online" and now - peer["last_seen"] > PEER_TIMEOUT:
+                    if (peer["status"] == "online"
+                            and now - peer["last_seen"] > PEER_TIMEOUT):
+                        # Transition fires once — no repeated callbacks.
                         peer["status"]    = "offline"
                         peer["connected"] = False
                         self._fire_callback(self.on_peer_discovered, peer_id, dict(peer))
-            time.sleep(2)
+            time.sleep(5)
+
+    def _sync_discovery_on_connect(self, peer_id: str, tcp_addr: str) -> None:
+        """Update discovered_peers when a session becomes active.
+
+        Stores the actual (possibly ephemeral) tcp_addr so that downstream
+        lookups by tcp_address still work on the acceptor side.
+
+        Args:
+            peer_id: SHA-256 identifier of the connected peer.
+            tcp_addr: Actual live TCP address (may be ephemeral port).
+        """
+        if not peer_id:
+            return
+        with self.discovery_lock:
+            info = self.discovered_peers.get(peer_id)
+            if info:
+                info["tcp_address"] = tcp_addr
+                info["connected"]   = True
 
     # ------------------------------------------------------------------ #
     # Peer registration / removal                                          #
     # ------------------------------------------------------------------ #
 
-    def _register_peer(self, tcp_addr: str, sock: socket.socket, is_initiator: bool) -> bool:
+    def _register_peer(self, tcp_addr: str, sock: socket.socket,
+                       is_initiator: bool) -> bool:
+        """Register a new TCP connection.
+        Args:
+            tcp_addr: "IP:PORT" key.
+            sock: Connected socket.
+            is_initiator: True if we dialled out.
+        Returns:
+            False if *tcp_addr* is already registered.
+        """
         with self.peers_lock:
             if tcp_addr in self.peers:
                 return False
             self.peers[tcp_addr]         = sock
             self._sock_to_addr[id(sock)] = tcp_addr
+            # Provide a complete schema upfront; handlers fill in the rest.
             self.peer_sessions[tcp_addr] = {
                 "state":        "pending",
+                "peer_id":      None,   # filled by handshake handler
                 "public_key":   None,
                 "session_key":  None,
                 "crypto":       None,
@@ -542,24 +799,44 @@ class P2PNode:
         return True
 
     def _remove_peer(self, peer_socket: socket.socket) -> None:
-        tcp_addr = self._get_peer_id(peer_socket)
+        """Close *peer_socket* and clean up all associated state."""
+        tcp_addr = self._get_tcp_addr(peer_socket)
+        disconnected_pid: str | None = None
+
         with self.peers_lock:
             if tcp_addr is not None:
+                sess             = self.peer_sessions.get(tcp_addr)
+                disconnected_pid = sess.get("peer_id") if sess else None
                 self.peers.pop(tcp_addr, None)
                 self.peer_sessions.pop(tcp_addr, None)
                 self._sock_to_addr.pop(id(peer_socket), None)
+
         try:
             peer_socket.close()
         except OSError:
             pass
+
         if tcp_addr is not None:
-            # Mark as disconnected in discovery table
             with self.discovery_lock:
-                for info in self.discovered_peers.values():
-                    if info.get("tcp_address") == tcp_addr:
-                        info["connected"] = False
-                        info["status"]    = "offline"
-                        break
+                # Prefer peer_id lookup (reliable even when tcp_addr is ephemeral).
+                target = (
+                    self.discovered_peers.get(disconnected_pid)
+                    if disconnected_pid else None
+                )
+                if target is None:
+                    # Pre-handshake disconnect — fall back to tcp_address search.
+                    for info in self.discovered_peers.values():
+                        if info.get("tcp_address") == tcp_addr:
+                            target = info
+                            break
+                if target is not None:
+                    target["connected"] = False
+                    # Per architecture spec: ONLINE ≠ CONNECTED.
+                    # The peer may still be broadcasting UDP — keep "online"
+                    # until _cleanup_expired_peers transitions them to "offline".
+                    if target.get("status") == "connected":
+                        target["status"] = "online"
+
             self._fire_callback(self.on_disconnect, tcp_addr)
 
     # ------------------------------------------------------------------ #
@@ -583,17 +860,18 @@ class P2PNode:
 
     def _send_session_key(self, peer_socket: socket.socket, tcp_addr: str) -> None:
         with self.peers_lock:
-            session = self.peer_sessions.get(tcp_addr)
-            if session is None:
-                return
-            raw_peer_key = session.get("public_key")
+            session      = self.peer_sessions.get(tcp_addr)
+            raw_peer_key = session.get("public_key") if session else None
 
         if not raw_peer_key:
+            logger.warning("[NODE] No public key in session for %s", tcp_addr)
+            self._remove_peer(peer_socket)
             return
+
         try:
             peer_pub = RSAUtils.load_public_key(raw_peer_key)
-        except Exception as exc:
-            logger.error("[NODE] Cannot load peer pub key: %s", exc)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.error("[NODE] Cannot load peer public key: %s", exc)
             self._remove_peer(peer_socket)
             return
 
@@ -608,18 +886,23 @@ class P2PNode:
             self._remove_peer(peer_socket)
             return
 
-        crypto = CryptoHandler(key=fernet_key)
+        crypto  = CryptoHandler(key=fernet_key)
+        peer_id = ""
         with self.peers_lock:
             session = self.peer_sessions.get(tcp_addr)
             if session is not None:
                 session["session_key"] = fernet_key
                 session["crypto"]      = crypto
                 session["state"]       = "active"
+                peer_id                = session.get("peer_id", "")
 
-        logger.info("[NODE] Session key sent → %s active", tcp_addr)
-        self._fire_callback(self.on_connected, tcp_addr)
+        self._sync_discovery_on_connect(peer_id, tcp_addr)
+        logger.info("[NODE] Session key sent → %s active (peer: %s)",
+                    tcp_addr, peer_id[:12] if peer_id else "?")
+        self._fire_callback(self.on_connected, peer_id, tcp_addr)
 
     def _schedule_handshake_timeout(self, tcp_addr: str) -> None:
+        """Drop a peer that has not completed the handshake within HANDSHAKE_TIMEOUT."""
         def _check() -> None:
             with self.peers_lock:
                 session = self.peer_sessions.get(tcp_addr)
@@ -636,14 +919,54 @@ class P2PNode:
         t.start()
 
     # ------------------------------------------------------------------ #
+    # Block helpers                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _is_ip_blocked(self, ip: str) -> bool:
+        """Fast pre-handshake check: is any BLOCKED peer known at *ip*?"""
+        with self.discovery_lock:
+            for pid, info in self.discovered_peers.items():
+                if info.get("ip") == ip and self.tofu.is_blocked(pid):
+                    return True
+        return False
+
+    def _disconnect_peer_id(self, peer_id: str) -> None:
+        """Force-close all TCP sessions for *peer_id*."""
+        with self.discovery_lock:
+            info = self.discovered_peers.get(peer_id)
+        peer_ip = info.get("ip") if info else None
+        if not peer_ip:
+            return
+        with self.peers_lock:
+            to_close = [
+                sock for addr, sock in self.peers.items()
+                if addr.startswith(f"{peer_ip}:")
+            ]
+        for sock in to_close:
+            logger.info("[NODE] Force-disconnecting blocked %s", peer_ip)
+            self._remove_peer(sock)
+
+    # ------------------------------------------------------------------ #
     # Utility                                                              #
     # ------------------------------------------------------------------ #
 
-    def _get_peer_id(self, peer_socket: socket.socket) -> str | None:
+    def _get_tcp_addr(self, peer_socket: socket.socket) -> str | None:
+        """Return the "IP:PORT" key for *peer_socket*, or None."""
         with self.peers_lock:
             return self._sock_to_addr.get(id(peer_socket))
 
+    def _get_peer_id(self, peer_socket: socket.socket) -> str | None:
+        """Compat alias for _get_tcp_addr (used by tests).
+        Args:
+            peer_socket: Connected socket object.
+        Returns:
+            "IP:PORT" key or None.
+        """
+        return self._get_tcp_addr(peer_socket)
+
     def _start_receive_thread(self, tcp_addr: str, sock: socket.socket) -> None:
+        # Prune dead threads before adding a new one (prevents unbounded growth).
+        self.receive_threads = [t for t in self.receive_threads if t.is_alive()]
         t = threading.Thread(
             target=self._receive_messages, args=(sock,),
             daemon=True, name=f"Recv-{tcp_addr}",
@@ -652,9 +975,10 @@ class P2PNode:
         self.receive_threads.append(t)
 
     def _fire_callback(self, callback, *args) -> None:
+        """Invoke *callback* safely, logging any exception it raises."""
         if callback is None:
             return
         try:
             callback(*args)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.exception("[NODE] Callback raised: %s", exc)

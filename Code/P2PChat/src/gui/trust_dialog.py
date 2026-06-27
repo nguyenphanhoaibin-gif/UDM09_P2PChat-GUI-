@@ -1,273 +1,161 @@
+"""Trust verification dialog — shown on first contact and fingerprint mismatch."""
+from __future__ import annotations
+
 import customtkinter as ctk
 
+
 class TrustDialog(ctk.CTkToplevel):
-    """
-    Trust On First Use (TOFU) Dialog
+    """Modal dialog for TOFU trust decisions.
 
-    Modes:
-        - new_peer
-        - warning
+    Modes
+    -----
+    ``new_peer``
+        Shown on first contact.  Offers Trust, Block, Skip.
+    ``warning``
+        Shown when a known peer's fingerprint changed (possible MITM).
+        Offers Update & Trust, Block.
 
-    Callback results:
-        - trust
-        - block
-        - skip
-        - update
+    Callback results: ``"trust"`` | ``"block"`` | ``"skip"`` | ``"update"``
     """
 
     def __init__(
         self,
         master,
-        mode,
-        peer_info,
-        callback=None
-    ):
-        super().__init__(master)
+        mode: str,
+        peer_info: dict,
+        callback=None,
+    ) -> None:
+        """Show the dialog.
 
-        self.mode = mode
+        Args:
+            master: Parent Tk widget.
+            mode: ``"new_peer"`` or ``"warning"``.
+            peer_info: Dict with keys from PeerInfo DTO (plus
+                ``known_fingerprint`` / ``current_fingerprint`` for
+                ``"warning"`` mode).
+            callback: Called with the result string when the user acts.
+        """
+        super().__init__(master)
+        self.mode      = mode
         self.peer_info = peer_info
-        self.callback = callback
+        self.callback  = callback
 
         self._setup_window()
 
-        if self.mode == "new_peer":
+        if mode == "new_peer":
             self._build_new_peer_ui()
-
-        elif self.mode == "warning":
+        elif mode == "warning":
             self._build_warning_ui()
-
         else:
-            raise ValueError(
-                f"Unsupported mode: {self.mode}"
-            )
+            raise ValueError(f"Unknown mode: {mode!r}")
 
-    # WINDOW
-   
-    def _setup_window(self):
+    # ------------------------------------------------------------------ #
+    # Window setup                                                         #
+    # ------------------------------------------------------------------ #
+
+    def _setup_window(self) -> None:
+        """Configure the toplevel window."""
         self.title("Peer Trust Verification")
         self.geometry("520x320")
         self.resizable(False, False)
-
-        self.transient(self.master)
         self.grab_set()
-
         self.grid_columnconfigure(0, weight=1)
 
-    # NEW PEER
-   
-    def _build_new_peer_ui(self):
+    # ------------------------------------------------------------------ #
+    # new_peer mode                                                        #
+    # ------------------------------------------------------------------ #
 
-        title = ctk.CTkLabel(
-            self,
-            text="🔑 New Peer",
-            font=("Arial", 20, "bold")
-        )
-        title.pack(pady=(20, 10))
+    def _build_new_peer_ui(self) -> None:
+        """Build UI for first-contact trust decision."""
+        ctk.CTkLabel(
+            self, text="🔑  New Peer",
+            font=("Segoe UI", 20, "bold"),
+        ).pack(pady=(20, 10))
 
         card = ctk.CTkFrame(self)
         card.pack(fill="x", padx=20)
 
-        username = self.peer_info.get(
-            "username",
-            "Unknown"
-        )
-
-        peer_id = self.peer_info.get(
-            "peer_id",
-            "-"
-        )
-
-        fingerprint = self.peer_info.get(
-            "fingerprint",
-            "-"
-        )
-
-        ctk.CTkLabel(
-            card,
-            text=f"Username:    {username}",
-            anchor="w"
-        ).pack(fill="x", padx=15, pady=(15, 5))
-
-        ctk.CTkLabel(
-            card,
-            text=f"Peer ID:     {peer_id}",
-            anchor="w"
-        ).pack(fill="x", padx=15, pady=5)
-
-        ctk.CTkLabel(
-            card,
-            text=f"Fingerprint: {fingerprint}",
-            anchor="w"
-        ).pack(fill="x", padx=15, pady=(5, 15))
+        for label, key in (
+            ("Username",    "username"),
+            ("Peer ID",     "peer_id"),
+            ("Fingerprint", "fingerprint"),
+        ):
+            ctk.CTkLabel(
+                card,
+                text=f"{label}:   {self.peer_info.get(key, '—')}",
+                anchor="w",
+            ).pack(fill="x", padx=15, pady=4)
 
         ctk.CTkLabel(
             self,
-            text=(
-                "Verify fingerprint with peer\n"
-                "before trusting."
-            ),
-            justify="center"
+            text="Verify the fingerprint with the peer before trusting.",
+            justify="center",
         ).pack(pady=20)
 
-        btn_frame = ctk.CTkFrame(
-            self,
-            fg_color="transparent"
-        )
-        btn_frame.pack(pady=10)
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=10)
 
-        ctk.CTkButton(
-            btn_frame,
-            text="Trust & Connect",
-            width=140,
-            command=lambda: self._send_result(
-                "trust"
-            )
-        ).pack(side="left", padx=5)
+        for text, result in (
+            ("Trust & Connect", "trust"),
+            ("Block",           "block"),
+            ("Skip",            "skip"),
+        ):
+            ctk.CTkButton(
+                btn_row, text=text, width=130,
+                command=lambda r=result: self._fire(r),
+            ).pack(side="left", padx=5)
 
-        ctk.CTkButton(
-            btn_frame,
-            text="Block",
-            width=100,
-            command=lambda: self._send_result(
-                "block"
-            )
-        ).pack(side="left", padx=5)
+    # ------------------------------------------------------------------ #
+    # warning mode                                                         #
+    # ------------------------------------------------------------------ #
 
-        ctk.CTkButton(
-            btn_frame,
-            text="Skip",
-            width=100,
-            command=lambda: self._send_result(
-                "skip"
-            )
-        ).pack(side="left", padx=5)
-
-    # WARNING
- 
-    def _build_warning_ui(self):
-
-        title = ctk.CTkLabel(
-            self,
-            text="⚠️ WARNING: Fingerprint Changed",
-            font=("Arial", 18, "bold")
-        )
-        title.pack(pady=(20, 10))
+    def _build_warning_ui(self) -> None:
+        """Build UI for fingerprint-mismatch warning."""
+        ctk.CTkLabel(
+            self, text="⚠️  Fingerprint Changed",
+            font=("Segoe UI", 18, "bold"),
+        ).pack(pady=(20, 10))
 
         card = ctk.CTkFrame(self)
         card.pack(fill="x", padx=20)
 
-        known_fp = self.peer_info.get(
-            "known_fingerprint",
-            "-"
-        )
-
-        current_fp = self.peer_info.get(
-            "current_fingerprint",
-            "-"
-        )
-
-        ctk.CTkLabel(
-            card,
-            text=f"Known:     {known_fp}",
-            anchor="w"
-        ).pack(fill="x", padx=15, pady=(15, 5))
-
-        ctk.CTkLabel(
-            card,
-            text=f"Current:   {current_fp}",
-            anchor="w"
-        ).pack(fill="x", padx=15, pady=(5, 15))
+        for label, key in (
+            ("Known",   "known_fingerprint"),
+            ("Current", "current_fingerprint"),
+        ):
+            ctk.CTkLabel(
+                card,
+                text=f"{label}:   {self.peer_info.get(key, '—')}",
+                anchor="w",
+            ).pack(fill="x", padx=15, pady=4)
 
         ctk.CTkLabel(
             self,
             text=(
-                "This may indicate a MITM attack.\n"
-                "Verify the fingerprint before trusting."
+                "This may indicate a man-in-the-middle attack.\n"
+                "Verify the fingerprint out-of-band before trusting."
             ),
-            justify="center"
+            justify="center",
         ).pack(pady=20)
 
-        btn_frame = ctk.CTkFrame(
-            self,
-            fg_color="transparent"
-        )
-        btn_frame.pack(pady=10)
+        btn_row = ctk.CTkFrame(self, fg_color="transparent")
+        btn_row.pack(pady=10)
 
-        ctk.CTkButton(
-            btn_frame,
-            text="Update & Trust",
-            width=150,
-            command=lambda: self._send_result(
-                "update"
-            )
-        ).pack(side="left", padx=10)
+        for text, result in (
+            ("Update & Trust", "update"),
+            ("Block",          "block"),
+        ):
+            ctk.CTkButton(
+                btn_row, text=text, width=140,
+                command=lambda r=result: self._fire(r),
+            ).pack(side="left", padx=10)
 
-        ctk.CTkButton(
-            btn_frame,
-            text="Block",
-            width=120,
-            command=lambda: self._send_result(
-                "block"
-            )
-        ).pack(side="left", padx=10)
+    # ------------------------------------------------------------------ #
+    # Result dispatch                                                      #
+    # ------------------------------------------------------------------ #
 
-    # RESULT
-  
-    def _send_result(self, result):
-
+    def _fire(self, result: str) -> None:
+        """Call the callback with *result* and close the dialog."""
         if self.callback:
             self.callback(result)
-
         self.destroy()
-
-
-# TEST
-
-if __name__ == "__main__":
-
-    ctk.set_appearance_mode("dark")
-
-    app = ctk.CTk()
-    app.geometry("500x300")
-
-    def handle_result(result):
-        print("Selected:", result)
-
-    def show_new_peer():
-        TrustDialog(
-            master=app,
-            mode="new_peer",
-            peer_info={
-                "username": "Alice",
-                "peer_id": "a3f9-7b2d",
-                "fingerprint": "AB:CD:EF:12:34:56"
-            },
-            callback=handle_result
-        )
-
-    def show_warning():
-        TrustDialog(
-            master=app,
-            mode="warning",
-            peer_info={
-                "known_fingerprint":
-                    "AB:CD:EF:12:34:56",
-                "current_fingerprint":
-                    "99:AA:BB:CC:DD:EE"
-            },
-            callback=handle_result
-        )
-
-    ctk.CTkButton(
-        app,
-        text="Test New Peer",
-        command=show_new_peer
-    ).pack(pady=20)
-
-    ctk.CTkButton(
-        app,
-        text="Test Warning",
-        command=show_warning
-    ).pack(pady=10)
-
-    app.mainloop()

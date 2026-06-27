@@ -1,90 +1,112 @@
-"""StatusBar: bottom bar with status message, identity, and peer stats."""
+"""StatusBar: bottom status bar with 5 segments."""
 from __future__ import annotations
-
 import customtkinter as ctk
+from gui import theme as T
 
 
 class StatusBar(ctk.CTkFrame):
-    """One-line bar at the bottom of the window."""
+    """5-segment bottom bar.  Attributes _status_label / _stats_label for tests."""
 
-    def __init__(self, master, **kwargs) -> None:
-        super().__init__(
-            master,
-            height=32,
-            corner_radius=0,
-            fg_color="#11111b",
-            **kwargs,
-        )
+    def __init__(self, master, **kw) -> None:
+        super().__init__(master, height=32, corner_radius=0,
+                         fg_color=T.BG_APP, **kw)
         self.grid_columnconfigure(1, weight=1)
 
-        # Left: identity
-        self._id_label = ctk.CTkLabel(
-            self, text="",
-            anchor="w",
-            font=("Consolas", 10),
-            text_color="#45475a",
-        )
-        self._id_label.grid(row=0, column=0, sticky="w", padx=(10, 0))
-
-        # Centre: status message
         self._status_label = ctk.CTkLabel(
             self, text="🔄 Initializing...",
-            anchor="center",
-            font=("Consolas", 11),
-            text_color="#6c7086",
-        )
-        self._status_label.grid(row=0, column=1, sticky="ew")
+            font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="w")
+        self._status_label.grid(row=0, column=0, sticky="w", padx=14, pady=6)
 
-        # Right: peer stats
+        self._disc_label = ctk.CTkLabel(
+            self, text="◎  Discovery: —",
+            font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="w")
+        self._disc_label.grid(row=0, column=1, sticky="w", padx=8)
+
+        self._conn_label = ctk.CTkLabel(
+            self, text="⎋  Not connected",
+            font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="w")
+        self._conn_label.grid(row=0, column=2, sticky="w", padx=8)
+
+        self._enc_label = ctk.CTkLabel(
+            self, text="🔓  —",
+            font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="w")
+        self._enc_label.grid(row=0, column=3, sticky="w", padx=8)
+
         self._stats_label = ctk.CTkLabel(
-            self,
-            text="Peers: 0",
-            anchor="e",
-            font=("Consolas", 10),
-            text_color="#45475a",
-        )
-        self._stats_label.grid(row=0, column=2, sticky="e", padx=(0, 10))
+            self, text="Peers: 0",
+            font=("Segoe UI", 9), text_color=T.TEXT_MUTED, anchor="e")
+        self._stats_label.grid(row=0, column=4, sticky="e", padx=14)
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    def set_status(self, text: str, color: str = "#6c7086") -> None:
+    def set_status(self, text: str, color: str = T.TEXT_MUTED) -> None:
+        """Set the primary status segment (also used by tests)."""
         self._status_label.configure(text=text, text_color=color)
 
     def set_identity(self, peer_id: str, fingerprint: str) -> None:
-        self._id_label.configure(
-            text=f"🆔 {peer_id}  🔑 {fingerprint}"
-        )
+        """Show local identity hash in segment 1."""
+        self._status_label.configure(
+            text=f"🆔  {peer_id}  🔑 {fingerprint}",
+            text_color=T.TEXT_MUTED)
 
-    def set_stats(
-        self,
-        peers: int = 0,
-        connected: int = 0,
-        contacts: int = 0,
-    ) -> None:
+    def set_discovery(self, active: bool) -> None:
+        """Toggle the discovery segment."""
+        if active:
+            self._disc_label.configure(
+                text="◉  Discovery: Active", text_color=T.SUCCESS)
+        else:
+            self._disc_label.configure(
+                text="◎  Discovery: —", text_color=T.TEXT_MUTED)
+
+    def set_connected_peer(self, label: str) -> None:
+        """Show connected peer in segment 3."""
+        self._conn_label.configure(
+            text=f"⎋  {label}", text_color=T.ACCENT)
+
+    def set_disconnected(self) -> None:
+        """Reset segment 3 to disconnected state."""
+        self._conn_label.configure(
+            text="⎋  Not connected", text_color=T.TEXT_MUTED)
+        self._enc_label.configure(
+            text="🔓  —", text_color=T.TEXT_MUTED)
+
+    def set_encrypted(self, active: bool) -> None:
+        """Toggle the encryption segment."""
+        if active:
+            self._enc_label.configure(
+                text="🔒  AES-256", text_color=T.SUCCESS)
+        else:
+            self._enc_label.configure(
+                text="🔓  —", text_color=T.TEXT_MUTED)
+
+    def set_stats(self, peers: int = 0, connected: int = 0,
+                  contacts: int = 0) -> None:
+        """Update the right-hand stats segment. Exact format tested by test_statusbar."""
         self._stats_label.configure(
-            text=(
-                f"Peers:{peers} | "
-                f"Connected:{connected} | "
-                f"Contacts:{contacts}  "
-            )
-        )
+            text=f"Peers:{peers} | Connected:{connected} | Contacts:{contacts}  ")
+        self.set_encrypted(connected > 0)
+        if peers > 0:
+            self.set_discovery(True)
 
-    # ── Named convenience methods ──────────────────────────────────────
+    # Compat shims
+    def set_initializing(self) -> None:
+        """Show initialising state."""
+        self.set_status("🔄 Initializing...", T.TEXT_MUTED)
 
-    def set_initializing(self)   -> None: 
-        self.set_status("🔄 Initializing...", "#6c7086")
-    def set_discovery_running(self) -> None: 
-        self.set_status("🔍 Discovering peers...", "#89b4fa")
-    def set_connected(self, peer: str)  -> None: 
-        self.set_status(f"🔗 Connected: {peer}", "#a6e3a1")
-    def set_handshake(self)      -> None: 
-        self.set_status("🤝 Performing handshake...", "#f9e2af")
-    def set_encrypted(self)      -> None: 
-        self.set_status("🔐 Encrypted session active", "#a6e3a1")
-    def set_disconnected(self)   -> None: 
-        self.set_status("❌ Disconnected", "#f38ba8")
-    def set_error(self, msg: str) -> None: 
-        self.set_status(f"⚠ {msg}", "#f38ba8")
+    def set_discovery_running(self) -> None:
+        """Show discovery running."""
+        self.set_discovery(True)
 
+    def set_connected(self, peer: str) -> None:
+        """Show connected state in segment 1."""
+        self.set_status(f"Connected: {peer}", T.ACCENT)
+
+    def set_handshake(self) -> None:
+        """Show handshake state."""
+        self.set_status("Handshake…", T.WARNING)
+
+    def set_error(self, msg: str) -> None:
+        """Show error in segment 1."""
+        self.set_status(f"⚠ {msg}", T.DANGER)
