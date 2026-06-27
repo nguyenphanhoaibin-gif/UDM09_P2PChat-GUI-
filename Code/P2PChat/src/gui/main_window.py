@@ -9,17 +9,18 @@ from gui.chatbox import ChatBox
 from gui.sidebar import Sidebar
 from gui.peer_details import PeerDetails
 from gui.statusbar import StatusBar
+from gui.transfer_panel import TransferPanel
+from gui.trust_dialog import TrustDialog
 from trust.trust_state import TrustState
 
 _TRUST_FG = {
-    TrustState.NEW: T.TRUST_NEW,
-    TrustState.TRUSTED: T.TRUST_TRUSTED,
+    TrustState.NEW:      T.TRUST_NEW,
+    TrustState.TRUSTED:  T.TRUST_TRUSTED,
     TrustState.VERIFIED: T.TRUST_VERIFIED,
     TrustState.MISMATCH: T.TRUST_MISMATCH,
-    TrustState.BLOCKED: T.TRUST_BLOCKED,
+    TrustState.BLOCKED:  T.TRUST_BLOCKED,
 }
 _STATUS_ICON = {"online": "●", "connected": "●", "offline": "○"}
-from gui.transfer_panel import TransferPanel
 
 
 class MainWindow(ctk.CTkFrame):
@@ -139,17 +140,23 @@ class MainWindow(ctk.CTkFrame):
                 font=("Segoe UI Emoji", 13), command=on_broadcast,
             ).grid(row=0, column=2, padx=(0, 10), pady=13)
 
-    def _build_details(self, on_trust, on_block, on_connect, on_disconnect=None) -> None:
-        self.details_panel = PeerDetails(
-            self, on_trust=on_trust, on_block=on_block,
-            on_connect=on_connect, on_disconnect=on_disconnect)
-        self.details_panel.grid(row=0, column=2, sticky="nsew")
+    def _build_details(self, on_trust, on_block, on_connect,
+                       on_disconnect=None) -> None:
+        # Right column: PeerDetails on top, TransferPanel below.
+        right_col = ctk.CTkFrame(self, fg_color="transparent")
+        right_col.grid(row=0, column=2, sticky="nsew")
+        right_col.grid_rowconfigure(0, weight=1)
+        right_col.grid_rowconfigure(1, weight=0)
+        right_col.grid_columnconfigure(0, weight=1)
 
-        self.transfer_panel = TransferPanel(
-            right_sidebar,
-            controller=None
-        )
-        self.transfer_panel.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 10))
+        self.details_panel = PeerDetails(
+            right_col, on_trust=on_trust, on_block=on_block,
+            on_connect=on_connect, on_disconnect=on_disconnect)
+        self.details_panel.grid(row=0, column=0, sticky="nsew")
+
+        self.transfer_panel = TransferPanel(right_col, controller=None)
+        self.transfer_panel.grid(row=1, column=0, sticky="ew",
+                                 padx=4, pady=(0, 10))
 
     def _build_statusbar(self) -> None:
         self.status_bar = StatusBar(self)
@@ -225,6 +232,36 @@ class MainWindow(ctk.CTkFrame):
             text=f"{icon} {status.capitalize()}   ·   Trust: {trust_state}",
             text_color=trust_fg if trust_state != "NEW" else dot)
 
+    # Transfer Panel API
+    def on_transfer_started(self, tid: str, filename: str,
+                            peer: str, direction: str) -> None:
+        """Notify the transfer panel that a transfer has begun.
+
+        Args:
+            tid: Unique transfer ID.
+            filename: Name of the file being transferred.
+            peer: Display name of the remote peer.
+            direction: ``"out"`` or ``"in"``.
+        """
+        self.transfer_panel.add_transfer(tid, filename, peer, direction)
+
+    def on_transfer_progress(self, tid: str, progress: float) -> None:
+        """Update the progress bar for *tid*.
+
+        Args:
+            tid: Unique transfer ID.
+            progress: Value in ``[0, 1]``.
+        """
+        self.transfer_panel.update_transfer(tid, progress)
+
+    def on_transfer_complete(self, tid: str) -> None:
+        """Remove the transfer card for *tid* (transfer finished or cancelled).
+
+        Args:
+            tid: Unique transfer ID.
+        """
+        self.transfer_panel.remove_transfer(tid)
+
     # Status bar wrappers
     def set_status(self, text: str, color: str = T.TEXT_MUTED) -> None:
         """Set main status bar segment 1."""
@@ -235,9 +272,24 @@ class MainWindow(ctk.CTkFrame):
         self.status_bar.set_identity(peer_id, fingerprint)
         self.status_bar.set_discovery(True)
 
-    def update_stats(self, peers: int = 0, connected: int = 0, contacts: int = 0) -> None:
+    def update_stats(self, peers: int = 0, connected: int = 0,
+                     contacts: int = 0) -> None:
         """Update peer-count segment."""
-        self.status_bar.set_stats(peers=peers, connected=connected, contacts=contacts)
+        self.status_bar.set_stats(peers=peers, connected=connected,
+                                  contacts=contacts)
+
+    # Trust dialog
+    def show_trust_dialog(self, mode: str, peer_info: dict,
+                          callback: Callable) -> None:
+        """Display the TOFU security verification dialog.
+
+        Args:
+            mode: ``"new_peer"`` or ``"warning"``.
+            peer_info: PeerInfo dict passed to the dialog.
+            callback: Called with the user's decision string.
+        """
+        TrustDialog(self.master, mode=mode, peer_info=peer_info,
+                    callback=callback)
 
     # Compat shims
     def set_trust_callback(self, cb) -> None:
@@ -247,9 +299,3 @@ class MainWindow(ctk.CTkFrame):
     def set_block_callback(self, cb) -> None:
         """Compat shim."""
         self.details_panel.set_block_callback(cb)
-
-    def show_trust_dialog(self, mode: str, peer_info: dict, callback: Callable) -> None:
-        """Display a security verification popup"""
-        from gui.trust_dialog import TrustDialog
-        TrustDialog(self.master, mode=mode, peer_info=peer_info, callback=callback)
-
