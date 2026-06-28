@@ -25,7 +25,7 @@ def test_network_constants():
     assert DEFAULT_LISTEN_PORT == 12000
     assert DISCOVERY_PORT == 15000
     assert SOCKET_TIMEOUT == 1
-    assert MAX_PACKET_SIZE == 65536
+    assert MAX_PACKET_SIZE == 131072  # raised for file chunks (64KB + Fernet + Base64)
 
 
 def test_discovery_constants():

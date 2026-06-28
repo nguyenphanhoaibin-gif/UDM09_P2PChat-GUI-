@@ -7,7 +7,9 @@ from storage.storage_manager import StorageManager
 
 class ContactBook:
     """Persistent contacts keyed by peer_id.
-    File layout (data/storage/contacts.json)::
+
+    File layout (``data/storage/contacts.json``)::
+
         {
             "<peer_id>": {
                 "peer_id":     "...",
@@ -32,6 +34,7 @@ class ContactBook:
 
     def load_contacts(self) -> dict:
         """Load contacts from disk and return them.
+
         Returns:
             Dict mapping peer_id → contact record.
         """
@@ -54,6 +57,7 @@ class ContactBook:
         fingerprint: str,
     ) -> None:
         """Add or overwrite a contact record for *peer_id*.
+
         Args:
             peer_id: SHA-256 peer identifier.
             alias: Human-readable display name.
@@ -70,6 +74,7 @@ class ContactBook:
 
     def remove_contact(self, peer_id: str) -> None:
         """Remove the contact for *peer_id*, if it exists.
+
         Args:
             peer_id: SHA-256 peer identifier.
         """
@@ -79,6 +84,7 @@ class ContactBook:
 
     def get_contact(self, peer_id: str) -> dict | None:
         """Return the contact record for *peer_id*, or None.
+
         Args:
             peer_id: SHA-256 peer identifier.
         """
@@ -96,7 +102,9 @@ class ContactBook:
         fingerprint: str | None = None,
     ) -> None:
         """Partially update an existing contact.
+
         Only non-None keyword arguments are applied.
+
         Args:
             peer_id: SHA-256 peer identifier.
             alias: New display name, or None to leave unchanged.

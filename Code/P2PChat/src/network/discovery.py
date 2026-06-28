@@ -22,6 +22,7 @@ DISCOVERY_RESPONSE = "discovery_response"
 
 class DiscoveryService:
     """UDP broadcast peer discovery.
+
     Optimisations vs naive implementation
     --------------------------------------
     * The JWT identity token is signed once and cached until it expires
@@ -30,10 +31,11 @@ class DiscoveryService:
     * The broadcast socket is created once and reused for all broadcasts
       (prevents the file-descriptor leak that occurred when a new socket was
       created per call and an OSError in the finally block silently ate it).
-    * _send_response replies to (ip, DISCOVERY_PORT) — not to the
+    * ``_send_response`` replies to ``(ip, DISCOVERY_PORT)`` — not to the
       sender's ephemeral UDP port — so the listener on the other side actually
       receives the response.
-    Lifecycle: start() → (periodic discover()) → stop()
+
+    Lifecycle: ``start()`` → (periodic ``discover()``) → ``stop()``
     """
 
     # How long (seconds) the cached JWT is considered fresh.
@@ -42,14 +44,15 @@ class DiscoveryService:
 
     def __init__(
         self,
-        username: str,
-        listen_port: int,
-        peer_id: str,
-        fingerprint: str,
-        public_key_pem: str,
+        username:        str,
+        listen_port:     int,
+        peer_id:         str,
+        fingerprint:     str,
+        public_key_pem:  str,
         private_key_pem: str,
     ) -> None:
         """Initialise the service (does not start yet).
+
         Args:
             username: Human-readable name to broadcast.
             listen_port: TCP port of the owning node.
@@ -229,10 +232,12 @@ class DiscoveryService:
 
     def _send_response(self, peer_ip_or_addr) -> None:
         """Reply to a broadcast with our own identity info.
-        Sends to (peer_ip, DISCOVERY_PORT) — the port the peer's listener
+
+        Sends to ``(peer_ip, DISCOVERY_PORT)`` — the port the peer's listener
         is bound to, NOT the ephemeral UDP source port.
+
         Args:
-            peer_ip_or_addr: Either an IP string or a (ip, port) tuple
+            peer_ip_or_addr: Either an IP string or a ``(ip, port)`` tuple
                 (the tuple form is the old API kept for test compatibility).
         """
         sock = self._bcast_sock
@@ -258,8 +263,10 @@ class DiscoveryService:
 
     def _get_or_refresh_token(self) -> str:
         """Return a cached JWT, re-signing only when the cached one is stale.
+
         RSA signing is expensive (~1 ms); doing it every 5 s is wasteful when
         the JWT is valid for 12 hours.  We refresh every 10 minutes instead.
+
         Returns:
             Signed RS256 JWT string.
         """
@@ -277,8 +284,10 @@ class DiscoveryService:
 
     def _make_discovery_packet(self, packet_type: str) -> dict:
         """Build a complete discovery or discovery_response packet.
+
         Args:
             packet_type: One of the DISCOVERY / DISCOVERY_RESPONSE constants.
+
         Returns:
             JSON-serialisable dict ready for UDP transmission.
         """
@@ -301,11 +310,13 @@ class DiscoveryService:
 
     def update_peer_registry(self, packet: dict, address: tuple) -> None:
         """Update the local nearby-peer registry from *packet*.
+
         This local copy is primarily used by unit tests.  The authoritative
-        registry is maintained by P2PNode.discovered_peers.
+        registry is maintained by ``P2PNode.discovered_peers``.
+
         Args:
             packet: Discovery packet dict.
-            address: (ip, port) of the packet sender.
+            address: ``(ip, port)`` of the packet sender.
         """
         peer_id = packet.get("peer_id")
         if not peer_id:
@@ -322,6 +333,7 @@ class DiscoveryService:
 
     def get_nearby_peers(self) -> dict:
         """Return a shallow copy of the local nearby-peer registry.
+
         Returns:
             Dict mapping peer_id → peer info dict.
         """
@@ -343,7 +355,7 @@ class DiscoveryService:
 
     @property
     def _socket(self) -> "socket.socket | None":
-        """Compat: tests inject a mock socket via discovery._socket."""
+        """Compat: tests inject a mock socket via ``discovery._socket``."""
         return self._bcast_sock
 
     @_socket.setter

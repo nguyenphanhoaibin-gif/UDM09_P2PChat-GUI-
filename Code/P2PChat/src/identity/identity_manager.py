@@ -4,29 +4,70 @@ import json
 import logging
 from pathlib import Path
 
-from identity.fingerprint import generate_fingerprint
-from identity.peer_id import generate_peer_id
 from security.rsa_utils import RSAUtils
+
+# ── Identity helpers ───────────────────────────────────────────────────────
+# These two functions are module-level so node.py can import generate_peer_id
+# directly from this module without pulling in an extra file.
+
+def generate_peer_id(public_key_pem: str | bytes) -> str:
+    """Return the SHA-256 peer ID derived from *public_key_pem*.
+
+    The peer ID is the lowercase hex digest of the full PEM bytes (including
+    headers).  This guarantees uniqueness across key sizes and formats.
+
+    Args:
+        public_key_pem: PEM-encoded RSA public key, as str or bytes.
+
+    Returns:
+        64-character lowercase hex string.
+    """
+    import hashlib  # pylint: disable=import-outside-toplevel
+    if isinstance(public_key_pem, str):
+        public_key_pem = public_key_pem.encode("utf-8")
+    return hashlib.sha256(public_key_pem).hexdigest()
+
+
+def generate_fingerprint(public_key_pem: str | bytes) -> str:
+    """Return a human-readable colon-separated hex fingerprint.
+
+    Format matches SSH-style fingerprints (e.g. ``AA:BB:CC:DD:…``), making
+    it easy for users to verify peer identity visually.
+
+    Args:
+        public_key_pem: PEM-encoded RSA public key, as str or bytes.
+
+    Returns:
+        Uppercase colon-separated hex string derived from SHA-256 of the PEM.
+    """
+    import hashlib  # pylint: disable=import-outside-toplevel
+    if isinstance(public_key_pem, str):
+        public_key_pem = public_key_pem.encode("utf-8")
+    digest = hashlib.sha256(public_key_pem).hexdigest().upper()
+    return ":".join(digest[i:i + 2] for i in range(0, len(digest), 2))
 
 logger = logging.getLogger(__name__)
 
 
 class IdentityManager:
     """Manages the local RSA identity (key pair, peer_id, fingerprint).
+
     On first run the key pair is generated and persisted to
-    data/identity/<profile>.json.  On subsequent runs the existing
+    ``data/identity/<profile>.json``.  On subsequent runs the existing
     key pair is loaded from disk, ensuring a stable peer_id across restarts.
+
     The *profile* parameter allows multiple instances on the same machine
     to maintain separate identities (useful for testing).  In production
-    the default profile "identity" is used, which maps to
-    data/identity/identity.json.
+    the default profile ``"identity"`` is used, which maps to
+    ``data/identity/identity.json``.
     """
 
     def __init__(self, profile: str = "identity") -> None:
-        """Initialise with empty identity (call load_identity() to populate).
+        """Initialise with empty identity (call ``load_identity()`` to populate).
+
         Args:
-            profile: Base filename (without .json) for the identity file.
-                     Defaults to "identity" for the standard single-instance path.
+            profile: Base filename (without ``.json``) for the identity file.
+                     Defaults to ``"identity"`` for the standard single-instance path.
         """
         self.identity_dir  = Path("data/identity")
         self.identity_file = self.identity_dir / f"{profile}.json"
@@ -44,9 +85,10 @@ class IdentityManager:
 
     def load_identity(self) -> None:
         """Load existing identity from disk, or generate a fresh one.
+
         Generates and persists a new RSA-2048 key pair when no identity
-        file exists.  Sets private_key_pem, public_key_pem,
-        peer_id, and fingerprint as side-effects.
+        file exists.  Sets ``private_key_pem``, ``public_key_pem``,
+        ``peer_id``, and ``fingerprint`` as side-effects.
         """
         self.identity_dir.mkdir(parents=True, exist_ok=True)
 
@@ -109,7 +151,7 @@ class IdentityManager:
         """Read key PEMs from the identity file and deserialise them.
 
         If the file is missing required fields or the PEM data is corrupted,
-        raises ValueError so load_identity can fall back to generating
+        raises ``ValueError`` so ``load_identity`` can fall back to generating
         a fresh identity rather than crashing the entire node startup.
 
         Raises:
@@ -134,7 +176,8 @@ class IdentityManager:
 
     def _generate_and_save(self) -> None:
         """Generate a new RSA-2048 key pair, serialise, and persist it.
-        Both PEMs must be set before save_identity() so that discovery
+
+        Both PEMs must be set before ``save_identity()`` so that discovery
         can sign JWTs immediately after startup.
         """
         self.private_key, self.public_key = RSAUtils.generate_key_pair()

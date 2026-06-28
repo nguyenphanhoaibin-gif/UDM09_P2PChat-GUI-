@@ -11,7 +11,17 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_LISTEN_PORT = 12000
 DISCOVERY_PORT = 15000
 
-MAX_PACKET_SIZE = 65536
+MAX_PACKET_SIZE = 131072   # 128 KB — must fit one 64 KB file chunk after Fernet + Base64
+
+# =========================
+# File Transfer
+# =========================
+
+FILE_CHUNK_SIZE   = 65536   # 64 KB raw chunk size before encryption/encoding
+FILE_MAX_SIZE     = 10 * 1024 * 1024  # 10 MB hard limit
+FILE_ALLOWED_EXT  = frozenset({".pdf", ".docx", ".txt",
+                                ".png", ".jpg", ".jpeg", ".zip"})
+FILE_DOWNLOAD_DIR = "downloads"   # default save directory (relative to cwd)
 SOCKET_TIMEOUT = 1
 
 # =========================

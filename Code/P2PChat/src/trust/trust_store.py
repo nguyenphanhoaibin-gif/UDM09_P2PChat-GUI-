@@ -14,7 +14,9 @@ _SCHEMA = {"fingerprint": str, "trust_state": str}
 
 class TrustStore:
     """Thread-safe JSON-backed store for peer trust records.
-    File layout (data/trust/known_peers.json)::
+
+    File layout (``data/trust/known_peers.json``)::
+
         {
             "<peer_id>": {
                 "fingerprint": "<hex>",
@@ -60,6 +62,7 @@ class TrustStore:
 
     def _save(self) -> None:
         """Schedule an asynchronous atomic write of the trust store.
+
         Taking a snapshot of the current data and writing in a background
         thread prevents the discovery or receive threads from stalling on
         slow storage while trust records are updated.
@@ -75,6 +78,7 @@ class TrustStore:
 
     def _write_snapshot(self, snapshot: dict) -> None:
         """Atomically write *snapshot* to disk (runs in a background thread).
+
         Args:
             snapshot: Copy of the peers dict taken while the lock was held.
         """
@@ -102,6 +106,7 @@ class TrustStore:
 
     def add_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
         """Insert a new peer record (overwrites if already exists).
+
         Args:
             peer_id: SHA-256 peer identifier.
             fingerprint: Colon-separated hex fingerprint.
@@ -116,6 +121,7 @@ class TrustStore:
 
     def update_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
         """Update an existing peer record.
+
         Args:
             peer_id: SHA-256 peer identifier.
             fingerprint: New fingerprint value.
@@ -130,6 +136,7 @@ class TrustStore:
 
     def remove_peer(self, peer_id: str) -> None:
         """Remove a peer from the store, if present.
+
         Args:
             peer_id: SHA-256 peer identifier.
         """
@@ -145,6 +152,7 @@ class TrustStore:
 
     def is_blocked(self, peer_id: str) -> bool:
         """Return True if *peer_id* is explicitly BLOCKED.
+
         Args:
             peer_id: SHA-256 peer identifier.
         """

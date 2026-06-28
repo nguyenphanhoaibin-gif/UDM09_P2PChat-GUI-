@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 class TOFUEngine:
     """TOFU trust engine.
+
     State machine (verify_peer)
     ───────────────────────────
     unknown peer          → store as TRUSTED, return NEW
@@ -17,6 +18,7 @@ class TOFUEngine:
     stored + fp match     → promote to VERIFIED, return VERIFIED
     stored + fp mismatch  → return MISMATCH (no auto-update; user must accept)
     """
+
     def __init__(self) -> None:
         """Initialise the engine with a fresh TrustStore."""
         self.store = TrustStore()
@@ -27,9 +29,11 @@ class TOFUEngine:
 
     def verify_peer(self, peer_id: str, fingerprint: str) -> str:
         """Verify *peer_id* against its stored fingerprint.
+
         Args:
             peer_id: SHA-256 peer identifier.
             fingerprint: Fingerprint received from the peer.
+
         Returns:
             One of the TrustState constants representing the outcome.
         """
@@ -65,6 +69,7 @@ class TOFUEngine:
 
     def add_peer(self, peer_id: str, fingerprint: str) -> None:
         """Explicitly add *peer_id* as TRUSTED (used by tests and contacts).
+
         Args:
             peer_id: SHA-256 peer identifier.
             fingerprint: Fingerprint to store.
@@ -73,6 +78,7 @@ class TOFUEngine:
 
     def update_peer(self, peer_id: str, fingerprint: str, trust_state: str) -> None:
         """Update the stored record for *peer_id*.
+
         Args:
             peer_id: SHA-256 peer identifier.
             fingerprint: New fingerprint value.
@@ -82,8 +88,10 @@ class TOFUEngine:
 
     def trust_peer(self, peer_id: str) -> bool:
         """Mark *peer_id* as TRUSTED (user-initiated).
+
         Args:
             peer_id: SHA-256 peer identifier.
+
         Returns:
             True if the record was found and updated.
         """
@@ -97,8 +105,10 @@ class TOFUEngine:
 
     def block_peer(self, peer_id: str) -> bool:
         """Mark *peer_id* as BLOCKED (user-initiated).
+
         Args:
             peer_id: SHA-256 peer identifier.
+
         Returns:
             True if the record was found and updated.
         """
@@ -112,8 +122,10 @@ class TOFUEngine:
 
     def unblock_peer(self, peer_id: str) -> bool:
         """Unblock *peer_id* by resetting trust to TRUSTED.
+
         Args:
             peer_id: SHA-256 peer identifier.
+
         Returns:
             True if the record was found and updated.
         """
@@ -126,6 +138,7 @@ class TOFUEngine:
 
     def accept_mismatch(self, peer_id: str, new_fingerprint: str) -> None:
         """Accept a fingerprint change and re-trust *peer_id*.
+
         Args:
             peer_id: SHA-256 peer identifier.
             new_fingerprint: The new fingerprint to trust.
@@ -135,8 +148,10 @@ class TOFUEngine:
 
     def get_trust_state(self, peer_id: str) -> str:
         """Return the current trust state string for *peer_id*.
+
         Args:
             peer_id: SHA-256 peer identifier.
+
         Returns:
             TrustState constant, or TrustState.NEW if peer is unknown.
         """
@@ -145,6 +160,7 @@ class TOFUEngine:
 
     def is_blocked(self, peer_id: str) -> bool:
         """Return True if *peer_id* is BLOCKED.
+
         Args:
             peer_id: SHA-256 peer identifier.
         """

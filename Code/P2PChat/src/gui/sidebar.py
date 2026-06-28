@@ -9,10 +9,21 @@ from gui import theme as T
 from trust.trust_state import TrustState
 
 
+_TRUST_LABELS: dict[str, str] = {
+    "NEW":      "New peer",
+    "TRUSTED":  "Trusted",
+    "VERIFIED": "Verified",
+    "MISMATCH": "Key changed",
+    "BLOCKED":  "Blocked",
+}
+
+
 def _time_ago(ts: float) -> str:
     """Return a human-readable elapsed-time string for *ts*.
+
     Args:
         ts: Unix timestamp of the last-seen moment.
+
     Returns:
         Short relative string such as "Just now", "5m ago", "2h ago".
     """
@@ -99,15 +110,21 @@ class PeerCard(ctk.CTkFrame):
                      font=("Segoe UI", 13, "bold"), text_color=T.TEXT_PRI,
                      ).grid(row=0, column=0, sticky="ew")
 
-        sub = f"{ip}:{port}" if ip and port else (
-            _time_ago(last_seen) if last_seen else "")
+        # Show IP:port only when port is known; otherwise show last-seen time.
+        # port may be 0 if the discovery heartbeat hasn't arrived yet.
+        if ip and port:
+            sub = f"{ip}:{port}"
+        elif last_seen:
+            sub = _time_ago(last_seen)
+        else:
+            sub = "Scanning…"
         ctk.CTkLabel(txt, text=sub, anchor="w",
                      font=("Consolas", 9), text_color=T.TEXT_MUTED,
                      ).grid(row=1, column=0, sticky="ew")
 
         badge = ctk.CTkFrame(txt, corner_radius=5, fg_color=trust_bg)
         badge.grid(row=2, column=0, sticky="w", pady=(4, 0))
-        ctk.CTkLabel(badge, text=trust,
+        ctk.CTkLabel(badge, text=_TRUST_LABELS.get(trust or "", trust or ""),
                      font=("Segoe UI", 9, "bold"), text_color=trust_fg,
                      ).pack(padx=7, pady=2)
 
@@ -201,9 +218,31 @@ class Sidebar(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        # ── Header ───────────────────────────────────────────────────
+        # ── Brand header ──────────────────────────────────────────────
+        brand = ctk.CTkFrame(self, fg_color=T.BG_HEADER, corner_radius=0, height=62)
+        brand.pack(fill="x")
+        brand.pack_propagate(False)
+
+        logo = ctk.CTkFrame(brand, width=36, height=36, corner_radius=10,
+                            fg_color=T.ACCENT)
+        logo.pack(side="left", padx=(14, 10), pady=13)
+        logo.pack_propagate(False)
+        ctk.CTkLabel(logo, text="P²", font=(T.FONT, 12, "bold"),
+                     text_color="#fff").place(relx=0.5, rely=0.5, anchor="center")
+
+        names = ctk.CTkFrame(brand, fg_color="transparent")
+        names.pack(side="left", fill="y", pady=12)
+        ctk.CTkLabel(names, text="P2PChat", font=(T.FONT, 13, "bold"),
+                     text_color=T.TEXT_PRI, anchor="w").pack(anchor="w")
+        ctk.CTkLabel(names, text="Encrypted P2P Messaging",
+                     font=(T.FONT, 8), text_color=T.TEXT_MUTED,
+                     anchor="w").pack(anchor="w")
+
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER).pack(fill="x")
+
+        # ── Peers header ──────────────────────────────────────────────
         hdr = ctk.CTkFrame(self, fg_color="transparent")
-        hdr.pack(fill="x", padx=14, pady=(16, 6))
+        hdr.pack(fill="x", padx=14, pady=(12, 6))
         ctk.CTkLabel(hdr, text="PEERS",
                      font=("Segoe UI", 10, "bold"),
                      text_color=T.TEXT_MUTED).pack(side="left")

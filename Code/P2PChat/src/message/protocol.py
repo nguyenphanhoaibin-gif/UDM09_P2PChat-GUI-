@@ -25,6 +25,30 @@ class PacketType:
     SYSTEM        = "system"
     ERROR         = "error"
 
+    # ── File transfer ──────────────────────────────────────────────────
+    # Workflow (Telegram-style):
+    #   Sender   → FILE_META        (metadata only; no data yet)
+    #   Receiver → DOWNLOAD_REQUEST (user clicked Download)
+    #   Sender   → FILE_START       (begin transfer)
+    #   Sender   → FILE_CHUNK × N   (encrypted + Base64 chunks)
+    #   Sender   → FILE_COMPLETE    (SHA-256 for integrity check)
+    #   Either   → FILE_CANCEL      (abort at any time)
+    #   Either   → FILE_ERROR       (unrecoverable error)
+    FILE_META         = "file_meta"
+    DOWNLOAD_REQUEST  = "download_request"
+    FILE_START        = "file_start"
+    FILE_CHUNK        = "file_chunk"
+    FILE_COMPLETE     = "file_complete"
+    FILE_CANCEL       = "file_cancel"
+    FILE_ERROR        = "file_error"
+
+    # File packet types that the node passes through without validation.
+    FILE_TYPES: frozenset[str] = frozenset({
+        "file_meta", "download_request",
+        "file_start", "file_chunk", "file_complete",
+        "file_cancel", "file_error",
+    })
+
 
 _HANDSHAKE_REQUIRED: frozenset[str] = frozenset({
     "type", "username", "version", "listen_port", "public_key",
@@ -95,7 +119,7 @@ class ProtocolHandler:
             packet: Dict to serialise as JSON.
 
         Returns:
-            Bytes in the format [4-byte big-endian length][JSON body].
+            Bytes in the format ``[4-byte big-endian length][JSON body]``.
         """
         json_data = json.dumps(packet).encode("utf-8")
         return struct.pack("!I", len(json_data)) + json_data
@@ -138,6 +162,10 @@ class ProtocolHandler:
                 logger.warning("validate_packet: 'payload' must be a string")
                 return False
 
+        elif packet_type in PacketType.FILE_TYPES:
+            # File-transfer packets are validated by TransferManager, not here.
+            return True
+
         else:
             logger.warning("validate_packet: unknown type '%s'", packet_type)
             return False
@@ -157,7 +185,7 @@ class ProtocolHandler:
         """Decrypt packet payload.
 
         Args:
-            packet: Packet dict containing a payload key.
+            packet: Packet dict containing a ``payload`` key.
             crypto: Active CryptoHandler, or None for plain payloads.
 
         Returns:
@@ -200,7 +228,7 @@ class ProtocolHandler:
             size: Number of bytes to read.
 
         Returns:
-            Bytes read, or b"" when the connection is closed.
+            Bytes read, or ``b""`` when the connection is closed.
         """
         received_data = bytearray()
         while len(received_data) < size:
