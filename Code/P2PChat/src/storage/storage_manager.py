@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 class StorageManager:
     """Low-level storage primitives used by all persistence services.
+
     All writes use an atomic temp-file rename pattern to prevent partial
     writes from corrupting stored data (important for identity and trust).
     """
@@ -16,6 +17,7 @@ class StorageManager:
     @staticmethod
     def ensure_dir(path: Path) -> None:
         """Create *path* and any missing parents, silently if already exists.
+
         Args:
             path: Directory path to create.
         """
@@ -24,9 +26,11 @@ class StorageManager:
     @staticmethod
     def load_json(file_path: Path, default=None):
         """Load and return JSON from *file_path*, or *default* on any error.
+
         Args:
             file_path: Path to the JSON file.
             default: Value returned when the file is missing or unreadable.
+
         Returns:
             Parsed JSON value, or *default*.
         """
@@ -46,8 +50,10 @@ class StorageManager:
     @staticmethod
     def save_json(file_path: Path, data) -> None:
         """Atomically write *data* as JSON to *file_path*.
-        Writes to a sibling .tmp file first, then renames it into place.
+
+        Writes to a sibling ``.tmp`` file first, then renames it into place.
         This guarantees the target file is never left in a partial state.
+
         Args:
             file_path: Destination path.
             data: JSON-serialisable value to persist.
