@@ -1,8 +1,20 @@
-"""Chat bubbles — Telegram/Zalo-style message rendering."""
+"""Chat bubbles — responsive, Lumina-inspired message rendering.
+
+Design decisions:
+    - ``add_chat_bubble`` returns the message label so ChatBox can track
+      it for wraplength updates on window resize (CRITICAL for correctness).
+    - Wraplength is passed in, not hardcoded, so resize events can update
+      all existing bubbles uniformly.
+    - Sent bubbles align right with ``anchor="e"``; received align left.
+    - Both sides have a timestamp footer — intentional per the Lumina spec.
+"""
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
+
 import customtkinter as ctk
+
 from gui import theme as T
 
 
@@ -10,67 +22,73 @@ def _now() -> str:
     return datetime.now().strftime("%H:%M")
 
 
-# Max bubble width as fraction of chat area — bubbles never fill full width
-_WRAP = 360
+def add_chat_bubble(
+    parent,
+    message: str,
+    sender: str = "me",
+    is_me: bool = False,
+    wraplength: int = 400,
+) -> Optional[ctk.CTkLabel]:
+    """Append one message bubble to *parent* and return the message label.
 
+    The caller should store the returned label in a list so that
+    ``wraplength`` can be updated later when the chat column resizes.
+    Returns ``None`` only if an unexpected error occurs.
 
-def add_chat_bubble(parent, message: str, sender: str = "me",
-                    is_me: bool = False) -> None:
-    """Append one message bubble to *parent* (a CTkScrollableFrame).
-    Layout mirrors Telegram:
-    - Sent  : right-aligned, blue, no sender name, double-tick
-    - Received: left-aligned, dark, sender name in accent colour
-    Both sides have consistent 8px vertical spacing and a timestamp footer.
+    Args:
+        parent: A CTkScrollableFrame (or any CTk container using pack).
+        message: Plaintext message body.
+        sender: Display name (shown on received bubbles).
+        is_me: True → right-aligned indigo bubble; False → left-aligned card.
+        wraplength: Initial wrap width in pixels — caller updates on resize.
     """
     ts = _now()
 
     outer = ctk.CTkFrame(parent, fg_color="transparent")
-    outer.pack(fill="x", padx=16, pady=(3, 3))
+    outer.pack(fill="x", padx=16, pady=(2, 2))
 
     if is_me:
-        # ── Sent bubble (right) ───────────────────────────────────
         bubble = ctk.CTkFrame(
-            outer, fg_color=T.BG_BUBBLE_ME, corner_radius=18,
-            # Flat bottom-right corner like Telegram
-        )
-        bubble.pack(anchor="e")
+            outer, fg_color=T.BG_BUBBLE_ME, corner_radius=16)
+        bubble.pack(anchor="e", padx=(72, 0))
 
-        ctk.CTkLabel(
+        msg_lbl = ctk.CTkLabel(
             bubble, text=message,
-            justify="left", wraplength=_WRAP,
-            text_color="#dbeafe", font=("Segoe UI", 13),
-        ).pack(anchor="w", padx=(14, 14), pady=(10, 2))
+            justify="left", wraplength=wraplength,
+            text_color="#e0e7ff",
+            font=(T.FONT, 13),
+        )
+        msg_lbl.pack(anchor="w", padx=(14, 14), pady=(10, 4))
 
-        # Footer row: spacer + timestamp + ticks
-        foot = ctk.CTkFrame(bubble, fg_color="transparent")
-        foot.pack(fill="x", padx=(14, 10), pady=(0, 8))
         ctk.CTkLabel(
-            foot, text=f"{ts}  ✓✓",
-            text_color="#93c5fd", font=("Segoe UI", 9),
-        ).pack(side="right")
+            bubble, text=f"{ts}  ✓✓",
+            text_color="#6366f1",
+            font=(T.FONT, 9),
+        ).pack(anchor="e", padx=(14, 12), pady=(0, 8))
 
     else:
-        # ── Received bubble (left) ────────────────────────────────
         bubble = ctk.CTkFrame(
-            outer, fg_color=T.BG_BUBBLE_IN, corner_radius=18,
-        )
-        bubble.pack(anchor="w")
+            outer, fg_color=T.BG_BUBBLE_IN, corner_radius=16)
+        bubble.pack(anchor="w", padx=(0, 72))
 
-        # Sender name
         ctk.CTkLabel(
             bubble, text=sender, anchor="w",
-            text_color=T.TEXT_LINK, font=("Segoe UI", 10, "bold"),
+            text_color=T.TEXT_LINK,
+            font=(T.FONT, 10, "bold"),
         ).pack(anchor="w", padx=14, pady=(10, 0))
 
-        # Message text
-        ctk.CTkLabel(
+        msg_lbl = ctk.CTkLabel(
             bubble, text=message,
-            justify="left", wraplength=_WRAP,
-            text_color=T.TEXT_PRI, font=("Segoe UI", 13),
-        ).pack(anchor="w", padx=14, pady=(2, 2))
+            justify="left", wraplength=wraplength,
+            text_color=T.TEXT_PRI,
+            font=(T.FONT, 13),
+        )
+        msg_lbl.pack(anchor="w", padx=14, pady=(2, 4))
 
-        # Timestamp footer
         ctk.CTkLabel(
             bubble, text=ts,
-            text_color=T.TEXT_TIME, font=("Segoe UI", 9),
+            text_color=T.TEXT_TIME,
+            font=(T.FONT, 9),
         ).pack(anchor="e", padx=12, pady=(0, 8))
+
+    return msg_lbl

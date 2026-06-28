@@ -1,6 +1,7 @@
 """ChatApp: root window — owns the controller and wires all callbacks."""
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 import time
@@ -17,6 +18,7 @@ from gui.ui_state import UIState
 from trust.trust_state import TrustState
 
 configure_logging()
+logger = logging.getLogger(__name__)
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -28,7 +30,7 @@ class ChatApp(ctk.CTk):
         super().__init__()
 
         self.listen_port = listen_port
-        self.title("P2PChat")
+        self.title(f"P2PChat  —  Port {listen_port}")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
         self.minsize(960, 620)
         self.configure(fg_color=T.BG_APP)
@@ -43,36 +45,56 @@ class ChatApp(ctk.CTk):
         self._toast_after: str | None = None   # pending after() id for toast
 
         # Per-conversation message log, keyed by peer_id.
-        # Each entry: list of (direction, sender, text) tuples.
-        # "direction" is "in" or "out". Lets us show only the selected
-        # peer's messages and reload history when switching peers.
-        self._conversations: dict[str, list[tuple[str, str, str]]] = {}
+        # Each entry is one of:
+        #   ("in",      sender,  text)         — received chat message
+        #   ("out",     "Me",   text)          — sent chat message
+        #   ("file_in", sender,  text, tid)    — received file offer
+        # "text" for file_in is "📄 filename\nsize_str" for restoration.
+        self._conversations: dict[str, list] = {}
         # Unread counts per peer_id (cleared when the peer is selected).
         self._unread: dict[str, int] = {}
 
+        # Peer IDs for which a MISMATCH TrustDialog is already open.
+        # Prevents re-opening the dialog on every 5-second discovery heartbeat.
+        self._mismatch_shown: set[str] = set()
+
         # ── Controller ────────────────────────────────────────────────
         self.controller = ChatController(
-            on_system = self._on_system,
-            on_message = self._on_message,
-            on_connected = self._on_connected,
-            on_disconnect = self._on_disconnect,
-            on_peers_update = self._on_peers_update,
-            on_peer_discovered = self._on_peer_discovered,
+            on_system            = self._on_system,
+            on_message           = self._on_message,
+            on_connected         = self._on_connected,
+            on_disconnect        = self._on_disconnect,
+            on_peers_update      = self._on_peers_update,
+            on_peer_discovered   = self._on_peer_discovered,
+            on_transfer_started  = self._on_transfer_started,
+            on_transfer_progress = self._on_transfer_progress,
+            on_transfer_complete = self._on_transfer_complete,
+            on_file_meta         = self._on_file_meta,
+            schedule_gui         = lambda fn: self.after(0, fn),
         )
+
+        # Pending FILE_META records waiting for the user to click Download.
+        # Maps transfer_id → TransferMeta
+        self._pending_metas: dict = {}
 
         # ── Main window ───────────────────────────────────────────────
         self.main_window = MainWindow(
             self,
-            on_peer_select = self._handle_peer_selected,
-            on_peer_connect = self._handle_peer_connect,
+            on_peer_select    = self._handle_peer_selected,
+            on_peer_connect   = self._handle_peer_connect,
             on_contact_select = self._handle_contact_selected,
-            on_trust = self._handle_trust,
-            on_block = self._handle_block,
+            on_trust          = self._handle_trust,
+            on_block          = self._handle_block,
             on_manual_connect = self._handle_manual_connect,
-            on_broadcast = self._handle_broadcast,
-            on_disconnect = self._handle_disconnect,
+            on_broadcast      = self._handle_broadcast,
+            on_disconnect     = self._handle_disconnect,
+            on_add_contact    = self._handle_add_contact,
         )
         self.main_window.set_send_callback(self._handle_send_message)
+
+        # Give the TransferPanel a reference to the controller so it can call
+        # send_file / cancel_transfer directly.
+        self.main_window.transfer_panel.controller = self.controller
 
         # ── Toast overlay (created once, hidden by default) ───────────
         self._toast = ctk.CTkLabel(
@@ -174,8 +196,11 @@ class ChatApp(ctk.CTk):
             self.ui_state.set_connection_status("connected")
             # Use peer_id directly — no fragile tcp_address search loop.
             info = self.ui_state.discovered_peers.get(peer_id, {})
-            info["connected"] = True
-            info["status"]    = "connected"
+            info["connected"]   = True
+            info["status"]      = "connected"
+            # Sync the live (possibly ephemeral) tcp_address so that
+            # _on_disconnect can find this peer by tcp_addr in ui_state.
+            info["tcp_address"] = tcp_addr
             self.ui_state.discovered_peers[peer_id] = info
             peer_name = info.get("username", tcp_addr)
 
@@ -197,28 +222,125 @@ class ChatApp(ctk.CTk):
         def _upd() -> None:
             self.ui_state.set_connection_status("offline")
             peer_name = tcp_addr
+
+            # Resolve peer_id from controller mapping (registered at connect
+            # time) — more reliable than searching by tcp_address, which may
+            # not yet be in ui_state if the peer never sent a discovery packet.
+            resolved_pid = self.controller.get_peer_id_for_tcp(tcp_addr)
+            found_pid: str | None = None
+
             for pid, info in self.ui_state.discovered_peers.items():
-                if info.get("tcp_address") == tcp_addr:
+                if pid == resolved_pid or info.get("tcp_address") == tcp_addr:
                     info["connected"] = False
                     info["status"]    = "online"
                     peer_name = info.get("username", tcp_addr)
                     self.ui_state.discovered_peers[pid] = info
+                    found_pid = pid
                     break
             self.main_window.status_bar.set_disconnected()
             self.main_window.set_status(
                 f"Disconnected: {peer_name}", T.WARNING)
             self._toast_show(f"🔌 {peer_name} disconnected", T.WARNING)
-            if self.selected_peer_id:
+            # Update header if the disconnected peer is currently selected.
+            # resolved_pid may be None (mapping is cleared before this closure
+            # runs on the Tk thread), so fall back to the pid found in the loop.
+            effective_pid = resolved_pid or found_pid
+            if self.selected_peer_id and self.selected_peer_id == effective_pid:
                 sel = self.ui_state.discovered_peers.get(
                     self.selected_peer_id, {})
-                if sel.get("tcp_address") == tcp_addr:
-                    self.main_window.set_active_chat(
-                        username    = sel.get("username", "?"),
-                        status      = "online",
-                        trust_state = sel.get("trust_state", TrustState.NEW))
-                    self.main_window.update_peer_details(sel)
+                self.main_window.set_active_chat(
+                    username    = sel.get("username", "?"),
+                    status      = "online",
+                    trust_state = sel.get("trust_state", TrustState.NEW))
+                self.main_window.update_peer_details(sel)
+            # If no peer is currently selected, restore the welcome placeholder.
+            elif self.selected_peer_id is None:
+                self.main_window.show_empty_state()
             self._schedule_peers_redraw()
         self.after(0, _upd)
+
+    # ── File transfer callbacks ───────────────────────────────────────────
+
+    def _on_transfer_started(self, tid: str, filename: str,
+                             peer_name: str, direction: str) -> None:
+        """Show a new transfer card in the TransferPanel."""
+        self.main_window.on_transfer_started(tid, filename, peer_name, direction)
+
+    def _on_transfer_progress(self, tid: str, fraction: float) -> None:
+        """Update the progress bar for *tid*."""
+        self.main_window.on_transfer_progress(tid, fraction)
+
+    def _on_transfer_complete(self, tid: str, success: bool, message: str) -> None:
+        """Mark the transfer card as done or failed, then remove it after a delay."""
+        if success:
+            # message is "Sent <filename> successfully." or "Saved to <path>"
+            # Strip the full path — just show the filename/action in the toast.
+            import os  # pylint: disable=import-outside-toplevel
+            short = message
+            if "Saved to " in message:
+                short = "✓  Saved to downloads/" + os.path.basename(
+                    message.replace("Saved to ", ""))
+            elif "Sent " in message:
+                short = "✓  " + message
+            self._toast_show(short, T.SUCCESS)
+        else:
+            # Shorten long error messages for the toast
+            short_err = message if len(message) < 80 else message[:77] + "…"
+            self._toast_show(f"✗  {short_err}", T.DANGER)
+        # Release the pending meta — transfer is over, no more downloads.
+        self._pending_metas.pop(tid, None)
+        # Remove card after 3 s so the user can read the result.
+        self.after(3000, lambda: self.main_window.on_transfer_complete(tid))
+
+    def _on_file_meta(self, meta, peer_name: str) -> None:
+        """Show a Download button in the chat for an incoming file offer.
+
+        The message appears inside the conversation the user is viewing;
+        if the sender is a different peer, the sender's conversation gets
+        a notification when they switch to it.
+        """
+        tid       = meta.transfer_id
+        filename  = meta.filename
+        filesize  = meta.filesize
+        sender_id = meta.sender_id
+
+        # Store pending meta for when the user clicks Download.
+        self._pending_metas[tid] = meta
+
+        # Format readable size
+        if filesize < 1024:
+            size_str = f"{filesize} B"
+        elif filesize < 1024 * 1024:
+            size_str = f"{filesize / 1024:.1f} KB"
+        else:
+            size_str = f"{filesize / (1024*1024):.1f} MB"
+
+        # File message text shown in chat
+        file_msg = f"📄 {filename}\n{size_str}"
+
+        # Store in conversation log as a special file entry
+        self._conversations.setdefault(sender_id, []).append(
+            ("file_in", peer_name, file_msg, tid))
+
+        # If sender is currently selected, render in chat immediately.
+        if sender_id == self.selected_peer_id:
+            self.main_window.add_file_message(
+                sender=peer_name,
+                filename=filename,
+                size_str=size_str,
+                on_download=lambda t=tid: self._handle_download(t),
+            )
+        else:
+            self._unread[sender_id] = self._unread.get(sender_id, 0) + 1
+            self._toast_show(f"📄 {peer_name}: {filename}", T.ACCENT)
+            self._apply_unread_badges()
+
+    def _handle_download(self, transfer_id: str) -> None:
+        """Called when the user clicks Download in a file message."""
+        ok = self.controller.request_download(transfer_id)
+        if not ok:
+            self._toast_show("⚠  Cannot start download — peer may have disconnected.",
+                             T.DANGER)
 
     def _on_peers_update(self) -> None:
         self.after(0, self._refresh_stats)
@@ -226,17 +348,76 @@ class ChatApp(ctk.CTk):
     def _on_peer_discovered(self, peer_id: str, info: dict) -> None:
         def _upd() -> None:
             self.ui_state.update_discovered_peer(peer_id, info)
-            status = info.get("status", "online")
+            status      = info.get("status", "online")
+            trust_state = info.get("trust_state", TrustState.NEW)
+
             if status == "online":
                 self.main_window.status_bar.set_discovery(True)
+
+            # When a known peer's fingerprint has changed, show a security
+            # warning dialog exactly once per session.  The TOFU engine has
+            # already set trust_state=MISMATCH; the user must decide whether
+            # to accept the new key or block the peer.
+            if (trust_state == TrustState.MISMATCH
+                    and peer_id not in self._mismatch_shown
+                    and status != "offline"):
+                self._mismatch_shown.add(peer_id)
+                self._show_mismatch_dialog(peer_id, info)
+
             if peer_id == self.selected_peer_id:
                 self.main_window.update_peer_details(info)
                 self.main_window.set_active_chat(
                     username    = info.get("username", peer_id),
                     status      = status,
-                    trust_state = info.get("trust_state", TrustState.NEW))
+                    trust_state = trust_state)
             self._schedule_peers_redraw()
         self.after(0, _upd)
+
+    def _show_mismatch_dialog(self, peer_id: str, info: dict) -> None:
+        """Show a security warning when a peer's fingerprint has changed.
+
+        Retrieves the stored (known) fingerprint from the trust store and
+        the new (current) fingerprint from the discovery packet.  The user
+        can choose to accept the new key or block the peer immediately.
+
+        Args:
+            peer_id: SHA-256 identifier of the peer with changed fingerprint.
+            info: Discovery info dict (contains current fingerprint).
+        """
+        rec = self.controller.node.tofu.store.get_peer(peer_id) if self.controller.node else None
+        known_fp   = rec["fingerprint"] if rec else "—"
+        current_fp = info.get("fingerprint", "—")
+        username   = info.get("username", peer_id[:8])
+
+        peer_info_for_dialog = {
+            "username":            username,
+            "peer_id":             peer_id,
+            "known_fingerprint":   known_fp,
+            "current_fingerprint": current_fp,
+        }
+
+        def _on_decision(result: str) -> None:
+            self._mismatch_shown.discard(peer_id)
+            if result == "update":
+                # Accept new key: update trust store and re-trust the peer.
+                if self.controller.node:
+                    self.controller.node.tofu.accept_mismatch(peer_id, current_fp)
+                self._refresh_peer_info(peer_id)
+                self._toast_show(f"✓  New key accepted for {username}", T.SUCCESS)
+            elif result == "block":
+                self.controller.block_peer(peer_id)
+                self._refresh_peer_info(peer_id)
+                self._toast_show(f"⊘  {username} blocked", T.DANGER)
+            else:
+                # "skip" — user dismissed. Don't re-show until next session.
+                pass
+
+        self.main_window.show_trust_dialog(
+            mode      = "warning",
+            peer_info = peer_info_for_dialog,
+            callback  = _on_decision,
+        )
+        logger.info("[APP] MISMATCH dialog shown for %s", peer_id[:12])
 
     # ------------------------------------------------------------------ #
     # Throttled sidebar rebuild                                            #
@@ -259,6 +440,8 @@ class ChatApp(ctk.CTk):
 
     def _handle_peer_selected(self, peer_id: str, peer_info: dict) -> None:
         self.selected_peer_id = peer_id
+        # Let TransferPanel know which peer is selected (for send_file).
+        self.controller._current_peer_id = peer_id  # pylint: disable=protected-access
         self.ui_state.select_peer(peer_id)
 
         # Clear unread badge for this peer.
@@ -279,7 +462,7 @@ class ChatApp(ctk.CTk):
             records = self.controller.message_history.load_history(peer_id)
             if records:
                 uname = peer_info.get("username", peer_id[:8])
-                loaded: list[tuple[str, str, str]] = []
+                loaded: list = []  # entries match _conversations format
                 for rec in records:
                     if rec.get("direction") == "sent":
                         loaded.append(("out", "Me", rec.get("content", "")))
@@ -287,10 +470,24 @@ class ChatApp(ctk.CTk):
                         loaded.append(("in", uname, rec.get("content", "")))
                 self._conversations[peer_id] = loaded
 
-        for direction, sender, msg in self._conversations.get(peer_id, []):
+        for entry in self._conversations.get(peer_id, []):
+            direction = entry[0]
+            sender    = entry[1]
+            msg       = entry[2]
             if direction == "out":
                 self.main_window.add_sent_message(
                     "Me", peer_info.get("username", peer_id), msg)
+            elif direction == "file_in":
+                # Restore file offer card with Download button.
+                tid = entry[3] if len(entry) > 3 else None
+                # Parse "📄 filename\nsize" back out
+                lines     = msg.split("\n", 1)
+                filename  = lines[0].replace("📄 ", "").strip()
+                size_str  = lines[1] if len(lines) > 1 else ""
+                cb = (lambda t=tid: self._handle_download(t)) if tid else None
+                self.main_window.add_file_message(
+                    sender=sender, filename=filename,
+                    size_str=size_str, on_download=cb)
             else:
                 self.main_window.add_received_message(sender, msg)
 
@@ -301,12 +498,18 @@ class ChatApp(ctk.CTk):
         for pid, info in self.ui_state.discovered_peers.items():
             info["unread"] = self._unread.get(pid, 0)
 
-    def _handle_peer_connect(self, peer_id: str, peer_info: dict) -> None:  # pylint: disable=unused-argument
-        # peer_id unused here — connect uses IP/port; peer_id is for dedup in node.
-        ip   = peer_info.get("ip")
-        port = peer_info.get("port")
-        if not ip or not port:
-            self._toast_show("⚠  Missing IP/port for peer.", T.DANGER)
+    def _handle_peer_connect(self, peer_id: str, peer_info: dict) -> None:
+        # Always use the freshest peer_info from ui_state — the sidebar card
+        # may hold a stale dict created before the discovery heartbeat updated
+        # the IP or tcp_port fields.
+        fresh = self.ui_state.discovered_peers.get(peer_id) or peer_info
+        ip    = fresh.get("ip")
+        port  = fresh.get("port")
+        if not ip:
+            self._toast_show("⚠  Peer IP unknown — wait for discovery.", T.DANGER)
+            return
+        if not port:
+            self._toast_show("⚠  Peer port unknown — wait for discovery.", T.DANGER)
             return
         self.main_window.set_status(f"Connecting to {ip}:{port}…", T.WARNING)
         # Run connect in background so UI doesn't freeze on timeout
@@ -330,6 +533,23 @@ class ChatApp(ctk.CTk):
         else:
             self._toast_show("Not connected.", T.TEXT_MUTED)
         # The node fires on_disconnect which will refresh the UI.
+
+    def _handle_add_contact(self, peer_id: str) -> None:
+        """Save *peer_id* to the contact book with their current identity info."""
+        info = self.ui_state.discovered_peers.get(peer_id, {})
+        alias       = info.get("username", peer_id[:8])
+        trust_state = info.get("trust_state", "NEW")
+        fingerprint = info.get("fingerprint", "")
+
+        self.controller.contact_book.add_contact(
+            peer_id     = peer_id,
+            alias       = alias,
+            trust_state = trust_state,
+            fingerprint = fingerprint,
+        )
+        self._toast_show(f"⭐  {alias} added to contacts", T.SUCCESS)
+        self._refresh_stats()
+        logger.info("[APP] Contact added: %s (%s)", peer_id[:12], alias)
 
     def _handle_contact_selected(self, _contact: dict) -> None:
         """Reserved for contacts panel."""

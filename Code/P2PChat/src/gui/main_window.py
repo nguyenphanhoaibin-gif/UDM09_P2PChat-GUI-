@@ -21,6 +21,13 @@ _TRUST_FG = {
     TrustState.BLOCKED:  T.TRUST_BLOCKED,
 }
 _STATUS_ICON = {"online": "●", "connected": "●", "offline": "○"}
+_TRUST_SHORT: dict[str, str] = {
+    "NEW":      "New",
+    "TRUSTED":  "✓ Trusted",
+    "VERIFIED": "✔ Verified",
+    "MISMATCH": "⚠ Key Changed",
+    "BLOCKED":  "⊘ Blocked",
+}
 
 
 class MainWindow(ctk.CTkFrame):
@@ -30,7 +37,7 @@ class MainWindow(ctk.CTkFrame):
                  on_peer_select=None, on_peer_connect=None,
                  on_contact_select=None, on_trust=None, on_block=None,
                  on_manual_connect=None, on_broadcast=None,
-                 on_disconnect=None) -> None:
+                 on_disconnect=None, on_add_contact=None) -> None:
         super().__init__(master, fg_color=T.BG_APP)
         self.grid(row=0, column=0, sticky="nsew")
         self.grid_rowconfigure(0, weight=1)
@@ -43,7 +50,8 @@ class MainWindow(ctk.CTkFrame):
         self._on_contact_select = on_contact_select
         self._build_sidebar(on_peer_select, on_peer_connect, on_manual_connect)
         self._build_chat(on_broadcast)
-        self._build_details(on_trust, on_block, on_peer_connect, on_disconnect)
+        self._build_details(on_trust, on_block, on_peer_connect, on_disconnect,
+                             on_add_contact)
         self._build_statusbar()
 
     # ------------------------------------------------------------------ #
@@ -69,7 +77,8 @@ class MainWindow(ctk.CTkFrame):
         # ── Header ───────────────────────────────────────────────────
         hdr = ctk.CTkFrame(col, height=68, fg_color=T.BG_HEADER, corner_radius=0)
         hdr.grid(row=0, column=0, sticky="ew")
-        hdr.grid_columnconfigure(1, weight=1)  # text column
+        hdr.grid_columnconfigure(1, weight=1)  # text column grows
+        hdr.grid_columnconfigure(2, weight=0)  # security badge — fixed
         hdr.grid_propagate(False)
 
         # Avatar
@@ -82,14 +91,21 @@ class MainWindow(ctk.CTkFrame):
         self._hdr_av_lbl.place(relx=0.5, rely=0.5, anchor="center")
 
         self.chat_target_label = ctk.CTkLabel(
-            hdr, text="Select a peer…",
-            font=("Segoe UI", 14, "bold"), text_color=T.TEXT_PRI, anchor="w")
+            hdr, text="P2PChat",
+            font=(T.FONT, 14, "bold"), text_color=T.TEXT_PRI, anchor="w")
         self.chat_target_label.grid(row=0, column=1, sticky="sw", pady=(14, 0))
 
         self.chat_info_label = ctk.CTkLabel(
-            hdr, text="No peer selected",
-            text_color=T.TEXT_MUTED, font=("Segoe UI", 10), anchor="w")
+            hdr, text="Secure local network messaging",
+            text_color=T.TEXT_MUTED, font=(T.FONT, 10), anchor="w")
         self.chat_info_label.grid(row=1, column=1, sticky="nw", pady=(0, 14))
+
+        # Security badge — always visible in header (matches Lumina design)
+        enc_badge = ctk.CTkFrame(hdr, fg_color=T.ACCENT_DIM, corner_radius=8)
+        enc_badge.grid(row=0, column=2, rowspan=2, padx=(0, 14), pady=12)
+        ctk.CTkLabel(enc_badge, text="🔒 End-to-End Encrypted",
+                     font=(T.FONT, 10), text_color=T.TEXT_LINK,
+                     ).pack(padx=10, pady=5)
 
         # Thin bottom border on header
         ctk.CTkFrame(col, height=1, fg_color=T.BORDER).grid(
@@ -99,12 +115,36 @@ class MainWindow(ctk.CTkFrame):
         self.chat_box = ChatBox(col)
         self.chat_box.grid(row=1, column=0, sticky="nsew")
 
-        # Empty state
-        self._empty = ctk.CTkLabel(
-            col,
-            text="💬\n\nSelect a peer from the list\nto start a conversation",
-            text_color=T.BORDER_LIGHT, font=("Segoe UI", 16))
-        self._empty.place(relx=0.5, rely=0.46, anchor="center")
+        # Empty state — inspired by Lumina "Start a Secure Session" screen
+        self._empty_frame = ctk.CTkFrame(col, fg_color="transparent")
+        self._empty_frame.place(relx=0.5, rely=0.46, anchor="center")
+
+        ctk.CTkLabel(self._empty_frame,
+                     text="🔒", font=("Segoe UI Emoji", 48),
+                     text_color=T.ACCENT_DIM).pack()
+        ctk.CTkLabel(self._empty_frame,
+                     text="Start a Secure Session",
+                     font=(T.FONT, 18, "bold"), text_color=T.TEXT_PRI,
+                     ).pack(pady=(12, 6))
+        ctk.CTkLabel(self._empty_frame,
+                     text="Select a peer from the sidebar to open an\nend-to-end encrypted conversation.",
+                     font=(T.FONT, 12), text_color=T.TEXT_MUTED,
+                     justify="center").pack()
+
+        badges_row = ctk.CTkFrame(self._empty_frame, fg_color="transparent")
+        badges_row.pack(pady=(20, 0))
+        for badge_text in ("🔐 End-to-End Encrypted",
+                           "⚡ Direct P2P", "📡 LAN Discovery"):
+            ctk.CTkFrame(badges_row,
+                         fg_color=T.ACCENT_DIM, corner_radius=12,
+                         ).pack(side="left", padx=4)
+            ctk.CTkLabel(badges_row.winfo_children()[-1],
+                         text=badge_text,
+                         font=(T.FONT, 10), text_color=T.TEXT_LINK,
+                         ).pack(padx=10, pady=5)
+
+        # Keep _empty as alias for show/hide compatibility
+        self._empty = self._empty_frame
 
         # ── Input bar ────────────────────────────────────────────────
         # Thin separator above input bar
@@ -128,10 +168,10 @@ class MainWindow(ctk.CTkFrame):
         self.message_entry.grid(row=0, column=0, sticky="ew", padx=(14, 8), pady=12)
 
         self.send_button = ctk.CTkButton(
-            input_bar, text="➤", width=42, height=42, corner_radius=21,
+            input_bar, text="Send", width=74, height=40, corner_radius=20,
             fg_color=T.ACCENT, hover_color=T.ACCENT_HOV,
-            text_color="#fff", font=("Segoe UI", 15, "bold"))
-        self.send_button.grid(row=0, column=1, padx=(0, 8), pady=11)
+            text_color="#fff", font=("Segoe UI", 12, "bold"))
+        self.send_button.grid(row=0, column=1, padx=(0, 8), pady=12)
 
         if on_broadcast:
             ctk.CTkButton(
@@ -141,7 +181,7 @@ class MainWindow(ctk.CTkFrame):
             ).grid(row=0, column=2, padx=(0, 10), pady=13)
 
     def _build_details(self, on_trust, on_block, on_connect,
-                       on_disconnect=None) -> None:
+                       on_disconnect=None, on_add_contact=None) -> None:
         # Right column: PeerDetails on top, TransferPanel below.
         right_col = ctk.CTkFrame(self, fg_color="transparent")
         right_col.grid(row=0, column=2, sticky="nsew")
@@ -151,7 +191,8 @@ class MainWindow(ctk.CTkFrame):
 
         self.details_panel = PeerDetails(
             right_col, on_trust=on_trust, on_block=on_block,
-            on_connect=on_connect, on_disconnect=on_disconnect)
+            on_connect=on_connect, on_disconnect=on_disconnect,
+            on_add_contact=on_add_contact)
         self.details_panel.grid(row=0, column=0, sticky="nsew")
 
         self.transfer_panel = TransferPanel(right_col, controller=None)
@@ -180,6 +221,18 @@ class MainWindow(ctk.CTkFrame):
         """Add a received message bubble."""
         self.chat_box.add_received(sender, msg)
 
+    def add_file_message(self, sender: str, filename: str,
+                         size_str: str, on_download=None) -> None:
+        """Show a file-offer card in the chat area.
+
+        Args:
+            sender: Display name of the sender.
+            filename: File name.
+            size_str: Pre-formatted size string.
+            on_download: Callback when user clicks Download.
+        """
+        self.chat_box.add_file_message(sender, filename, size_str, on_download)
+
     def add_sent_message(self, sender: str, recipient: str, msg: str) -> None:
         """Add a sent message bubble."""
         self.chat_box.add_sent(sender, recipient, msg)
@@ -187,6 +240,15 @@ class MainWindow(ctk.CTkFrame):
     def clear_chat(self) -> None:
         """Clear all messages."""
         self.chat_box.clear()
+
+    def show_empty_state(self) -> None:
+        """Show the welcome / no-peer-selected placeholder in the chat area."""
+        self._empty_frame.place(relx=0.5, rely=0.46, anchor="center")
+        self.chat_target_label.configure(text="P2PChat")
+        self.chat_info_label.configure(text="Secure local network messaging",
+                                       text_color=T.TEXT_MUTED)
+        self._hdr_av.configure(fg_color=T.ACCENT_DIM)
+        self._hdr_av_lbl.configure(text="🔒", font=("Segoe UI Emoji", 18))
 
     def get_message_text(self) -> str:
         """Return text entry content."""
@@ -215,7 +277,7 @@ class MainWindow(ctk.CTkFrame):
                         status: str = "offline",
                         trust_state: str = "NEW") -> None:
         """Update the chat header for the active peer."""
-        self._empty.place_forget()
+        self._empty_frame.place_forget()
 
         icon     = _STATUS_ICON.get(status, "○")
         dot      = T.STATUS_DOT.get(status, T.STATUS_DOT["offline"])
@@ -228,8 +290,9 @@ class MainWindow(ctk.CTkFrame):
         self.chat_target_label.configure(text=username)
         # Use trust colour for the info line so the trust state is visually
         # prominent (e.g. VERIFIED = green, MISMATCH = red).
+        trust_short = _TRUST_SHORT.get(trust_state, trust_state)
         self.chat_info_label.configure(
-            text=f"{icon} {status.capitalize()}   ·   Trust: {trust_state}",
+            text=f"{icon} {status.capitalize()}  ·  {trust_short}",
             text_color=trust_fg if trust_state != "NEW" else dot)
 
     # Transfer Panel API

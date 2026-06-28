@@ -32,10 +32,17 @@ class PeerDetails(ctk.CTkFrame):
     # ------------------------------------------------------------------ #
 
     def _build(self) -> None:
-        # Section label
-        ctk.CTkLabel(self, text="PEER DETAILS",
-                     font=("Segoe UI", 9, "bold"), text_color=T.TEXT_MUTED,
-                     anchor="w").pack(anchor="w", padx=16, pady=(16, 10))
+        # ── Section header ────────────────────────────────────────
+        hdr = ctk.CTkFrame(self, fg_color=T.BG_HEADER, corner_radius=0, height=42)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        ctk.CTkLabel(hdr, text="Peer Details",
+                     font=(T.FONT, 11, "bold"), text_color=T.TEXT_PRI,
+                     anchor="w").pack(side="left", padx=16, fill="y")
+
+        # Spacer below header
+        ctk.CTkFrame(self, height=1, fg_color=T.BORDER).pack(fill="x")
+        ctk.CTkFrame(self, height=10, fg_color="transparent").pack(fill="x")
 
         # ── Avatar card ──────────────────────────────────────────────
         av_card = ctk.CTkFrame(self, fg_color=T.BG_CARD, corner_radius=14)

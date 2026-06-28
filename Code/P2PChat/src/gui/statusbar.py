@@ -47,9 +47,10 @@ class StatusBar(ctk.CTkFrame):
 
     def set_identity(self, peer_id: str, fingerprint: str) -> None:
         """Show local identity hash in segment 1."""
+        # Shorten for status bar — full values visible in peer details
         self._status_label.configure(
-            text=f"🆔  {peer_id}  🔑 {fingerprint}",
-            text_color=T.TEXT_MUTED)
+            text=f"🟢 Online  ·  ID {peer_id[:12]}…",
+            text_color=T.SUCCESS)
 
     def set_discovery(self, active: bool) -> None:
         """Toggle the discovery segment."""
@@ -91,22 +92,22 @@ class StatusBar(ctk.CTkFrame):
             self.set_discovery(True)
 
     # Compat shims
-    def set_initializing(self) -> None:
+    def set_initializing(self)          -> None:
         """Show initialising state."""
         self.set_status("🔄 Initializing...", T.TEXT_MUTED)
 
-    def set_discovery_running(self) -> None:
+    def set_discovery_running(self)     -> None:
         """Show discovery running."""
         self.set_discovery(True)
 
-    def set_connected(self, peer: str) -> None:
+    def set_connected(self, peer: str)  -> None:
         """Show connected state in segment 1."""
         self.set_status(f"Connected: {peer}", T.ACCENT)
 
-    def set_handshake(self) -> None:
+    def set_handshake(self)             -> None:
         """Show handshake state."""
         self.set_status("Handshake…", T.WARNING)
 
-    def set_error(self, msg: str) -> None:
+    def set_error(self, msg: str)       -> None:
         """Show error in segment 1."""
         self.set_status(f"⚠ {msg}", T.DANGER)
