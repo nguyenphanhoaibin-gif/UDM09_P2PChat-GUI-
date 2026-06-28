@@ -3,6 +3,7 @@
 
 class TrustState:
     """Enumeration of peer trust states.
+
     State machine:
         NEW       — first discovery, not yet in store
         TRUSTED   — manually trusted by the user
