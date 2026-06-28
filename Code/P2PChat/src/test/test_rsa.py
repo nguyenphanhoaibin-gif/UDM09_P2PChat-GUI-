@@ -10,6 +10,7 @@ def test_generate_key_pair():
     assert private_key is not None
     assert public_key is not None
     
+from security.rsa_utils import RSAUtils
 
 
 def test_rsa_encrypt_decrypt_round_trip():
